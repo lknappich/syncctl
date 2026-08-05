@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/lknappich/syncctl/compare/v0.1.0...v0.2.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* Prometheus metrics are renamed from geo_sync_* to syncctl_*. Existing alerts and dashboards must be updated:   geo_sync_pg_replay_lag_seconds       -> syncctl_pg_replay_lag_seconds   geo_sync_drift_total                 -> syncctl_drift_total   geo_sync_sync_duration_seconds       -> syncctl_sync_duration_seconds   geo_sync_last_sync_timestamp_seconds -> syncctl_last_sync_timestamp_seconds
+
+### Bug Fixes
+
+* **gitfetch:** correct hashed storage layout to documented SHA-256 form ([d705a4c](https://github.com/lknappich/syncctl/commit/d705a4c1e58f2392779cae16607a909bfbbe626a))
+* **readonly,config:** stop describing write suppression as Maintenance Mode ([d0d1e47](https://github.com/lknappich/syncctl/commit/d0d1e479f5d3a0896e291df95f8951a48ada3e70))
+
+
+### Refactoring
+
+* **consistency,pgsetup,autorepair:** inject runners for test coverage ([3510afd](https://github.com/lknappich/syncctl/commit/3510afd4b061cc36d2e61750761fd581da98a263))
+* **doctor:** inject Runner and PoolFactory for full test coverage ([e8449fb](https://github.com/lknappich/syncctl/commit/e8449fb056360aac26b45188ee34b6012f2b795b))
+* **gitrsync,fsstorage,gitfetch:** inject localcmd.Runner for tests ([d0e0c32](https://github.com/lknappich/syncctl/commit/d0e0c329e9e9df2e42fa5344ac93e7cb14cb14ca))
+* **postgres,objectstorage:** extract Querier and bucketLister interfaces ([a544588](https://github.com/lknappich/syncctl/commit/a544588c96c93c87f38837e0b3aa3370953c72a2))
+* rename project to syncctl ([872a4dc](https://github.com/lknappich/syncctl/commit/872a4dcd1436528dc81800bbc433de78ba30cb3c))
+* **sshexec:** introduce Runner interface for mockable SSH calls ([ac24e55](https://github.com/lknappich/syncctl/commit/ac24e551246c1359c75e48b482d49514e0e1a201))
+
+
+### Documentation
+
+* **agents,readme:** add trademark policy and disclaimer ([f901a7d](https://github.com/lknappich/syncctl/commit/f901a7d0f5ae9fef8224915288dbbb9defbcb43c))
+
 ## [Unreleased]
 
 ### Fixed
