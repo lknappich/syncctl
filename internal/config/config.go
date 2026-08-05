@@ -141,9 +141,11 @@ type SyncConfig struct {
 	// quorum + --yes). Set false to forbid automated promotion.
 	FailoverEnabled bool `yaml:"failover_enabled"`
 
-	// ReadOnlySecondary: if true, the serve command will enforce
-	// read-only mode on the secondary GitLab (block writes at the app
-	// layer via maintenance mode or proxy 403s on mutating methods).
+	// ReadOnlySecondary: if true, the serve command applies the
+	// write-suppression measures in internal/readonly (registry read-only,
+	// Sidekiq paused, no writable repository storage). These reduce the
+	// surface but do not block every write path — front the replica with a
+	// proxy that rejects mutating methods if you need a hard guarantee.
 	ReadOnlySecondary bool `yaml:"read_only_secondary"`
 
 	// ConsistencySamplePct: fraction (0.0–1.0) of secondary git repos

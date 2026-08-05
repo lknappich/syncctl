@@ -33,7 +33,7 @@ The following table enumerates every `sudo` command the tool runs:
 | `sudo gitlab-ctl stop/start` | secondary/old-primary | Stop/start GitLab services during failover |
 | `sudo -u gitlab-psql pg_ctl promote` | secondary | Promote standby to primary during failover |
 | `sudo -u gitlab-psql pg_basebackup` | old-primary | Re-bootstrap as secondary after role-swap |
-| `sudo gitlab-rails runner ...` | secondary | Set/clear repository_storages for maintenance mode |
+| `sudo gitlab-rails runner ...` | secondary | Set/clear repository_storages to suppress writes on the replica |
 | `sudo rsync` | primary (remote) | Read git-owned files during rsync |
 | `sudo grep` | both | Read root-owned secrets.yml for db_key_base parity check |
 
