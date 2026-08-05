@@ -152,3 +152,9 @@ Requires Go 1.24+. A `docker-compose` dev stack is provided under
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
+
+## Trademarks
+
+GitLab is a registered trademark of GitLab B.V. This project is not
+affiliated with, endorsed by, or sponsored by GitLab B.V. References to
+GitLab describe the software this tool interoperates with.
