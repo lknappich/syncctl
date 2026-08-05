@@ -6,11 +6,21 @@ name: Release Please
 # release as a draft, then this workflow calls the Release workflow to
 # attach the built artifacts to it.
 #
-# The draft matters. GitHub freezes assets on a release once it is
-# published (immutable releases), so a published release cannot be filled
-# in afterwards — goreleaser gets a 422. release-please therefore leaves
-# it in draft and goreleaser, which is also configured for draft, uploads
-# into it. Publishing stays a deliberate manual step.
+# The ordering here is forced by two GitHub behaviours that pull against
+# each other:
+#
+#   1. Assets are frozen once a release is published (immutable releases),
+#      so a published release cannot be filled in afterwards — goreleaser
+#      gets a 422. The release must therefore stay a draft until its
+#      artifacts are attached.
+#   2. A draft release has no tag. GitHub only creates the tag when the
+#      release is published, so goreleaser would have nothing to build
+#      from.
+#
+# Hence: release-please opens the draft, this workflow creates the tag
+# explicitly, goreleaser builds that tag and uploads into the existing
+# draft, and publishing stays a deliberate manual step — at which point
+# immutability applies to a release that already has its assets.
 on:
   push:
     branches: [main]
@@ -33,6 +43,27 @@ jobs:
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # GitHub only creates a release's tag when that release is published,
+      # so the draft above leaves no tag behind and goreleaser has nothing
+      # to check out. Create it explicitly at the released commit.
+      - name: Create tag for draft release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+          gh api "repos/${REPO}/git/refs" \
+            -f "ref=refs/tags/${TAG}" \
+            -f "sha=${SHA}" >/dev/null
+          echo "Created tag ${TAG} at ${SHA}."
 
   publish:
     needs: release-please

@@ -67,6 +67,10 @@ release:
     name: syncctl
   draft: true
   prerelease: auto
+  # release-please has already opened the draft release for this tag and
+  # written its notes. Target that draft instead of creating a second one.
+  # mode defaults to keep-existing, so the generated notes are preserved.
+  use_existing_draft: true
 
 sboms:
   - id: default
