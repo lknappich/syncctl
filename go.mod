@@ -1,4 +1,4 @@
-module github.com/lknappich/gitlab-geo-sync
+module github.com/lknappich/syncctl
 
 go 1.25.0
 

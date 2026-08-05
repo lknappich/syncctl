@@ -33,7 +33,7 @@ func Generate(ctx context.Context, w io.Writer) error {
 	componentSet := map[string]bool{}
 	for _, mf := range mfs {
 		switch mf.GetName() {
-		case "geo_sync_pg_replay_lag_seconds":
+		case "syncctl_pg_replay_lag_seconds":
 			for _, m := range mf.GetMetric() {
 				if m.GetGauge() != nil {
 					v := m.GetGauge().GetValue()
@@ -46,7 +46,7 @@ func Generate(ctx context.Context, w io.Writer) error {
 					}
 				}
 			}
-		case "geo_sync_drift_total":
+		case "syncctl_drift_total":
 			for _, m := range mf.GetMetric() {
 				if m.GetCounter() != nil {
 					report.DriftCount += int64(m.GetCounter().GetValue())
@@ -57,7 +57,7 @@ func Generate(ctx context.Context, w io.Writer) error {
 					}
 				}
 			}
-		case "geo_sync_last_sync_timestamp_seconds":
+		case "syncctl_last_sync_timestamp_seconds":
 			for _, m := range mf.GetMetric() {
 				if m.GetGauge() != nil {
 					ts := m.GetGauge().GetValue()
@@ -83,7 +83,7 @@ func Generate(ctx context.Context, w io.Writer) error {
 
 // Print writes the SLA report to w.
 func (r *Report) Print(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "=== gitlab-geo-sync SLA Report ===\n\n")
+	_, _ = fmt.Fprintf(w, "=== syncctl SLA Report ===\n\n")
 	_, _ = fmt.Fprintf(w, "PostgreSQL Replay Lag:\n")
 	_, _ = fmt.Fprintf(w, "  Current: %s\n", r.PGLagCurrent)
 	_, _ = fmt.Fprintf(w, "  Peak:    %s\n", r.PGLagPeak)

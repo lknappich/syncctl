@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 // mockRunner records calls and returns canned output.

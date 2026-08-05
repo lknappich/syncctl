@@ -1,6 +1,6 @@
 # Architecture
 
-`gitlab-geo-sync` performs **full one-to-one geo-replication** between
+`syncctl` performs **full one-to-one geo-replication** between
 self-hosted GitLab instances using only standard infrastructure tooling
 and public, documented interfaces. It is a clean-room, independent
 implementation — not GitLab Geo and not derived from GitLab EE source.
@@ -12,11 +12,11 @@ implementation — not GitLab Geo and not derived from GitLab EE source.
 The primary replication path for the database is PostgreSQL's native
 physical streaming replication:
 
-1. `geoctl pg setup` runs `pg_basebackup` against the primary to seed
+1. `syncctl pg setup` runs `pg_basebackup` against the primary to seed
    the secondary's data directory.
 2. The secondary's WAL receiver connects to the primary using a
    `REPLICATION`-privileged role and a named replication slot.
-3. `geoctl serve` observes lag via `pg_stat_replication` (on the
+3. `syncctl serve` observes lag via `pg_stat_replication` (on the
    primary) and `pg_is_in_recovery()` (on the secondary).
 
 This copies every table, ID, timestamp, and encrypted column
@@ -38,7 +38,7 @@ Two modes, selected by `primary.git.mode`:
 ### Object storage
 
 - **S3** — cross-region replication is performed by the cloud
-  provider (AWS, MinIO, etc.). `geoctl` verifies the replica bucket's
+  provider (AWS, MinIO, etc.). `syncctl` verifies the replica bucket's
   object count and total size matches the primary, surfacing drift if
   replication lag exceeds the configured threshold.
 - **FS** — `rsync` of uploads, artifacts, packages, LFS, and registry
@@ -48,7 +48,7 @@ Two modes, selected by `primary.git.mode`:
 
 The secondary shares the primary's `db_key_base` so the GitLab
 application itself can decrypt webhook secrets, access tokens, 2FA
-seeds, etc. `geoctl dbkey` verifies parity. Our tool never decrypts
+seeds, etc. `syncctl dbkey` verifies parity. Our tool never decrypts
 anything — it only copies and compares the key bytes.
 
 ### Redis
@@ -65,7 +65,7 @@ read-only mode.
 
 ## Control plane
 
-`geoctl` is the single binary that orchestrates all of the above:
+`syncctl` is the single binary that orchestrates all of the above:
 
 | Command | Purpose |
 |---|---|

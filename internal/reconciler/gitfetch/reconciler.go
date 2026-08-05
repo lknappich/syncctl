@@ -8,7 +8,7 @@ package gitfetch
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -22,11 +22,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
-	"github.com/lknappich/gitlab-geo-sync/internal/metrics"
-	"github.com/lknappich/gitlab-geo-sync/internal/projectpath"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/metrics"
+	"github.com/lknappich/syncctl/internal/projectpath"
+	"github.com/lknappich/syncctl/internal/reconciler"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 const name = "git_fetch"
@@ -201,16 +201,16 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 }
 
 // repoDiskPath maps a project to its on-disk relative path under
-// <storage>/repositories/, matching Gitaly's layout conventions:
-//   - hashed storage: @hashed/XX/YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY.git
-//     where XX is the first two hex chars of the SHA1(project_id) and
-//     YYYY... is the full 40-char hex digest.
-//   - legacy storage: <namespace_path>/<path_with_namespace>.git
-//     We use the route path (which is path_with_namespace) for this.
+// <storage>/repositories/, following the layout GitLab documents publicly
+// in "Repository storage paths":
+//   - hashed storage: @hashed/AA/BB/<hash>.git, where <hash> is the
+//     lowercase hex SHA-256 of the project ID and AA/BB are its first
+//     and second character pairs.
+//   - legacy storage: <path_with_namespace>.git, taken from the route path.
 func repoDiskPath(_ string, hashed bool, routePath string, projectID int32) string {
 	if hashed {
-		h := sha1Hex(projectID)
-		return fmt.Sprintf("@hashed/%s/%s.git", h[:2], h)
+		h := hashedStorageHash(projectID)
+		return fmt.Sprintf("@hashed/%s/%s/%s.git", h[0:2], h[2:4], h)
 	}
 	if routePath == "" {
 		return ""
@@ -218,10 +218,11 @@ func repoDiskPath(_ string, hashed bool, routePath string, projectID int32) stri
 	return routePath + ".git"
 }
 
-// sha1Hex returns the 40-char lowercase hex SHA-1 of the project ID
-// encoded as a string, matching GitLab's hashed-storage digest.
-func sha1Hex(projectID int32) string {
-	h := sha1.New()
+// hashedStorageHash returns the 64-char lowercase hex SHA-256 of the
+// project ID rendered as a decimal string — the digest GitLab's hashed
+// storage layout is keyed on.
+func hashedStorageHash(projectID int32) string {
+	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%d", projectID)
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -273,12 +274,53 @@ func (r *Reconciler) FetchProject(ctx context.Context, projectPath string) error
 	if err := projectpath.Validate(projectPath); err != nil {
 		return fmt.Errorf("invalid project path: %w", err)
 	}
-	repoPath := projectPath + ".git"
-	p := projectRow{RepoPath: repoPath}
+	p, err := r.resolveProject(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	if r.fetchOne(ctx, p) {
 		return nil
 	}
 	return fmt.Errorf("git fetch failed for %s", projectPath)
+}
+
+// resolveProject looks up a project by its route path so the on-disk
+// layout is derived the same way as in Reconcile — hashed storage needs
+// the project ID, which the path alone does not carry. When no DB pool is
+// available the legacy layout is the only thing we can infer.
+func (r *Reconciler) resolveProject(ctx context.Context, projectPath string) (projectRow, error) {
+	if r.primaryPool == nil {
+		return projectRow{RepoPath: projectPath + ".git"}, nil
+	}
+	rows, err := r.primaryPool.Query(ctx, `
+		SELECT p.id, p.repository_storage, p.hashed_storage
+		FROM projects p
+		JOIN routes r
+		  ON r.source_id = p.id
+		 AND r.source_type = 'Project'
+		WHERE r.path = $1
+		LIMIT 1`, projectPath)
+	if err != nil {
+		return projectRow{}, fmt.Errorf("look up project %s: %w", projectPath, err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return projectRow{}, fmt.Errorf("look up project %s: %w", projectPath, err)
+		}
+		return projectRow{}, fmt.Errorf("project %s not found in replicated DB", projectPath)
+	}
+	var (
+		p       projectRow
+		storage string
+		hashed  bool
+	)
+	if err := rows.Scan(&p.ID, &storage, &hashed); err != nil {
+		return projectRow{}, fmt.Errorf("scan project %s: %w", projectPath, err)
+	}
+	p.RepoPath = repoDiskPath(storage, hashed, projectPath, p.ID)
+	return p, nil
 }
 
 // maxParallel is exposed for future concurrent fetching; currently sequential.

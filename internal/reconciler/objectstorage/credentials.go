@@ -4,7 +4,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 // credentialsFromConfig builds an aws.CredentialsProvider from the

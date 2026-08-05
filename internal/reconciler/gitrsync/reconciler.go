@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
-	"github.com/lknappich/gitlab-geo-sync/internal/metrics"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/metrics"
+	"github.com/lknappich/syncctl/internal/reconciler"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 const name = "git_rsync"

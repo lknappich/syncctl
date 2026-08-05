@@ -1,4 +1,4 @@
-// Package main is the geoctl command-line entry point.
+// Package main is the syncctl command-line entry point.
 package main
 
 import (
@@ -12,28 +12,28 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/dbkey"
-	"github.com/lknappich/gitlab-geo-sync/internal/doctor"
-	"github.com/lknappich/gitlab-geo-sync/internal/failover"
-	initcmd "github.com/lknappich/gitlab-geo-sync/internal/initcmd"
-	"github.com/lknappich/gitlab-geo-sync/internal/logging"
-	"github.com/lknappich/gitlab-geo-sync/internal/metrics"
-	"github.com/lknappich/gitlab-geo-sync/internal/pgsetup"
-	"github.com/lknappich/gitlab-geo-sync/internal/readonly"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/apivalidator"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/consistency"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/fsstorage"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/gitfetch"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/gitrsync"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/objectstorage"
-	pgreconciler "github.com/lknappich/gitlab-geo-sync/internal/reconciler/postgres"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler/registry"
-	"github.com/lknappich/gitlab-geo-sync/internal/runbook"
-	"github.com/lknappich/gitlab-geo-sync/internal/sla"
-	"github.com/lknappich/gitlab-geo-sync/internal/version"
-	"github.com/lknappich/gitlab-geo-sync/internal/webhook"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/dbkey"
+	"github.com/lknappich/syncctl/internal/doctor"
+	"github.com/lknappich/syncctl/internal/failover"
+	initcmd "github.com/lknappich/syncctl/internal/initcmd"
+	"github.com/lknappich/syncctl/internal/logging"
+	"github.com/lknappich/syncctl/internal/metrics"
+	"github.com/lknappich/syncctl/internal/pgsetup"
+	"github.com/lknappich/syncctl/internal/readonly"
+	"github.com/lknappich/syncctl/internal/reconciler"
+	"github.com/lknappich/syncctl/internal/reconciler/apivalidator"
+	"github.com/lknappich/syncctl/internal/reconciler/consistency"
+	"github.com/lknappich/syncctl/internal/reconciler/fsstorage"
+	"github.com/lknappich/syncctl/internal/reconciler/gitfetch"
+	"github.com/lknappich/syncctl/internal/reconciler/gitrsync"
+	"github.com/lknappich/syncctl/internal/reconciler/objectstorage"
+	pgreconciler "github.com/lknappich/syncctl/internal/reconciler/postgres"
+	"github.com/lknappich/syncctl/internal/reconciler/registry"
+	"github.com/lknappich/syncctl/internal/runbook"
+	"github.com/lknappich/syncctl/internal/sla"
+	"github.com/lknappich/syncctl/internal/version"
+	"github.com/lknappich/syncctl/internal/webhook"
 )
 
 func main() {
@@ -54,8 +54,8 @@ func newRootCmd() *cobra.Command {
 	g := &globalFlags{}
 
 	root := &cobra.Command{
-		Use:           "geoctl",
-		Short:         "gitlab-geo-sync control plane",
+		Use:           "syncctl",
+		Short:         "syncctl control plane",
 		Long:          longHelp,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -87,7 +87,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-const longHelp = `geoctl orchestrates infrastructure-level (Postgres WAL + object/git
+const longHelp = `syncctl orchestrates infrastructure-level (Postgres WAL + object/git
 storage replication) one-to-one mirroring between self-hosted GitLab
 instances. It does NOT use GitLab's proprietary Geo feature; all
 replication is performed via documented Postgres/S3/git interfaces.`
@@ -214,7 +214,7 @@ func newServeCmd(g *globalFlags) *cobra.Command {
 				go func() { fc.Run(ctx); errCh <- nil }()
 			}
 
-			cmd.Println("gitlab-geo-sync serving; reconcilers running")
+			cmd.Println("syncctl serving; reconcilers running")
 			select {
 			case <-ctx.Done():
 				return nil
@@ -664,9 +664,9 @@ func newInitCmd() *cobra.Command {
 			fmt.Println("     export SEC_REPL_PASSWORD=...")
 			fmt.Println("     export S3_AK=...")
 			fmt.Println("     export S3_SK=...")
-			fmt.Println("  2. Run: geoctl doctor -c", outputPath)
-			fmt.Println("  3. Run: geoctl pg setup --secondary <name> --data-dir /var/opt/gitlab/postgresql/data")
-			fmt.Println("  4. Run: geoctl serve -c", outputPath)
+			fmt.Println("  2. Run: syncctl doctor -c", outputPath)
+			fmt.Println("  3. Run: syncctl pg setup --secondary <name> --data-dir /var/opt/gitlab/postgresql/data")
+			fmt.Println("  4. Run: syncctl serve -c", outputPath)
 			return nil
 		},
 	}

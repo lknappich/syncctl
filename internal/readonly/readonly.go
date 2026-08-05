@@ -1,26 +1,34 @@
-// Package readonly enforces read-only mode on a secondary GitLab instance
-// via SSH. It does this by:
-//   - enabling GitLab's maintenance mode (blocks web writes at the
-//     application layer with a 503),
+// Package readonly suppresses writes on a secondary GitLab instance via
+// SSH. It does this by:
+//   - putting the container registry into read-only mode so no pushes
+//     land on the replica,
 //   - pausing Sidekiq so no background jobs run on the secondary while it
 //     is a replica, and
-//   - putting the Docker registry into read-only mode so no pushes land
-//     on the replica.
+//   - clearing the writable repository storage list so the application
+//     will not place new repositories on the replica.
 //
-// This is standard GitLab omnibus administration, not EE-specific.
+// All three are standard GitLab omnibus administration, available on CE.
+// We deliberately do not use GitLab's Maintenance Mode, which is a paid
+// Premium/Ultimate feature.
+//
+// These measures shrink the write surface; they are not a hard read-only
+// guarantee. The replica's Postgres is a physical standby and rejects
+// writes at the storage layer, so application writes fail rather than
+// diverge — but for a clean user-facing block, front the secondary with a
+// proxy that rejects mutating HTTP methods.
 package readonly
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
-// Enable puts the secondary into read-only mode:
-//  1. Enable maintenance mode (blocks web writes with a 503).
+// Enable applies the write-suppression measures to the secondary:
+//  1. Start the registry read-only filter.
 //  2. Pause Sidekiq (no job processing on the replica).
-//  3. Start the registry read-only filter.
+//  3. Clear repository_storages so no new repositories are placed here.
 func Enable(ctx context.Context, sshHost string, dryRun bool) error {
 	return EnableWithConfig(ctx, sshHost, dryRun, sshexec.Default)
 }

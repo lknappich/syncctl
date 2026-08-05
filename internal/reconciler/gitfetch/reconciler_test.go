@@ -2,7 +2,7 @@ package gitfetch
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/localcmd"
 )
 
 func TestRepoDiskPathLegacy(t *testing.T) {
@@ -32,24 +32,35 @@ func TestRepoDiskPathLegacyEmptyRoute(t *testing.T) {
 }
 
 func TestRepoDiskPathHashed(t *testing.T) {
-	h := sha1.New()
+	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%d", 42)
 	full := hex.EncodeToString(h.Sum(nil))
 	got := repoDiskPath("default", true, "ignored", 42)
-	want := fmt.Sprintf("@hashed/%s/%s.git", full[:2], full)
+	want := fmt.Sprintf("@hashed/%s/%s/%s.git", full[0:2], full[2:4], full)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestSha1HexDeterministic(t *testing.T) {
-	h1 := sha1Hex(1)
-	h2 := sha1Hex(1)
-	if h1 != h2 {
-		t.Errorf("sha1Hex not deterministic: %q vs %q", h1, h2)
+// Pins the layout against the value documented in GitLab's public
+// "Repository storage paths" page: SHA-256 of the project ID, split into
+// two two-character directory levels under @hashed.
+func TestRepoDiskPathHashedGolden(t *testing.T) {
+	got := repoDiskPath("default", true, "ignored", 1)
+	want := "@hashed/6b/86/6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b.git"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
-	if len(h1) != 40 {
-		t.Errorf("expected 40-char hex, got %d", len(h1))
+}
+
+func TestHashedStorageHashDeterministic(t *testing.T) {
+	h1 := hashedStorageHash(1)
+	h2 := hashedStorageHash(1)
+	if h1 != h2 {
+		t.Errorf("hashedStorageHash not deterministic: %q vs %q", h1, h2)
+	}
+	if len(h1) != 64 {
+		t.Errorf("expected 64-char hex, got %d", len(h1))
 	}
 }
 
@@ -165,6 +176,45 @@ func TestFetchProjectDryRun(t *testing.T) {
 	}
 }
 
+// With hashed storage on, the webhook path must resolve the project ID
+// from the DB and fetch into @hashed/..., not into the legacy route path.
+func TestFetchProjectUsesHashedLayout(t *testing.T) {
+	pool := &mockPool{rows: []projectRow{{ID: 1}}, hashed: true}
+	runner := &mockGitRunner{out: []byte("")}
+	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(runner)
+	if err := r.FetchProject(context.TODO(), "group/proj"); err != nil {
+		t.Fatalf("FetchProject: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 git call, got %d", len(runner.calls))
+	}
+	want := "/r/@hashed/6b/86/6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b.git"
+	if got := runner.calls[0].args[1]; got != want {
+		t.Errorf("fetched %q, want %q", got, want)
+	}
+}
+
+func TestFetchProjectUnknownProject(t *testing.T) {
+	pool := &mockPool{rows: []projectRow{}}
+	runner := &mockGitRunner{}
+	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(runner)
+	err := r.FetchProject(context.TODO(), "group/proj")
+	if err == nil {
+		t.Fatal("expected error for project missing from the DB")
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("should not fetch an unresolved project, got %d calls", len(runner.calls))
+	}
+}
+
+func TestFetchProjectLookupError(t *testing.T) {
+	pool := &mockPool{err: errors.New("db down")}
+	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(&mockGitRunner{})
+	if err := r.FetchProject(context.TODO(), "group/proj"); err == nil {
+		t.Fatal("expected error when the lookup query fails")
+	}
+}
+
 func TestSetMaxParallel(t *testing.T) {
 	r := &Reconciler{}
 	r.SetMaxParallel(16)
@@ -183,20 +233,22 @@ func TestName(t *testing.T) {
 // --- mock pool for listProjects ---
 
 type mockPool struct {
-	rows []projectRow
-	err  error
+	rows   []projectRow
+	hashed bool
+	err    error
 }
 
 func (p *mockPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
-	return &mockRows{rows: p.rows}, nil
+	return &mockRows{rows: p.rows, hashed: p.hashed}, nil
 }
 
 type mockRows struct {
-	rows []projectRow
-	idx  int
+	rows   []projectRow
+	hashed bool
+	idx    int
 }
 
 func (m *mockRows) Next() bool {
@@ -209,12 +261,20 @@ func (m *mockRows) Next() bool {
 
 func (m *mockRows) Scan(dest ...any) error {
 	r := m.rows[m.idx-1]
+	// resolveProject scans (id, repository_storage, hashed_storage);
+	// listProjects scans those plus namespace id and route path.
+	if len(dest) == 3 {
+		*(dest[0].(*int32)) = r.ID
+		*(dest[1].(*string)) = "default"
+		*(dest[2].(*bool)) = m.hashed
+		return nil
+	}
 	*(dest[0].(*int32)) = r.ID
 	*(dest[1].(*string)) = "default"
 	// namespaceID as sql.NullInt64 valid=false
 	dest[2].(*sql.NullInt64).Valid = false
 	// hashed bool
-	*(dest[3].(*bool)) = false
+	*(dest[3].(*bool)) = m.hashed
 	// routePath as sql.NullString
 	dest[4].(*sql.NullString).String = r.RepoPath
 	dest[4].(*sql.NullString).Valid = true

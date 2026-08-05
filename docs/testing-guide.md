@@ -1,6 +1,6 @@
 # Testing Guide: Two Real GitLab Instances
 
-This guide walks you through testing gitlab-geo-sync end-to-end using
+This guide walks you through testing syncctl end-to-end using
 two real self-hosted GitLab instances — a **primary** and a **secondary**.
 
 ## Prerequisites
@@ -10,7 +10,7 @@ two real self-hosted GitLab instances — a **primary** and a **secondary**.
 - Two GitLab instances (Omnibus recommended), both accessible via SSH.
 - PostgreSQL on the primary configured for physical streaming replication.
 - SSH key access from your workstation to both GitLab servers.
-- The `geoctl` binary (build it: `go build -o bin/geoctl ./cmd/geoctl`).
+- The `syncctl` binary (build it: `go build -o bin/syncctl ./cmd/syncctl`).
 
 ### Primary PostgreSQL setup (one-time)
 
@@ -62,11 +62,11 @@ sudo gitlab-ctl reconfigure
 
 ## Step-by-step test
 
-### Step 0: Build geoctl
+### Step 0: Build syncctl
 
 ```sh
-cd /path/to/gitlab-geo-sync
-go build -o bin/geoctl ./cmd/geoctl
+cd /path/to/syncctl
+go build -o bin/syncctl ./cmd/syncctl
 ```
 
 ### Step 1: Generate a config
@@ -74,7 +74,7 @@ go build -o bin/geoctl ./cmd/geoctl
 Either use the wizard:
 
 ```sh
-./bin/geoctl init -o config.yaml
+./bin/syncctl init -o config.yaml
 ```
 
 Or copy and edit the example:
@@ -97,13 +97,13 @@ export S3_SK='your_s3_secret_key'        # only if using S3
 ### Step 3: Validate config
 
 ```sh
-./bin/geoctl config-validate -c config.yaml
+./bin/syncctl config-validate -c config.yaml
 ```
 
 ### Step 4: Run doctor (prerequisite checks)
 
 ```sh
-./bin/geoctl doctor -c config.yaml
+./bin/syncctl doctor -c config.yaml
 ```
 
 This checks:
@@ -126,7 +126,7 @@ On the **secondary** GitLab server, run `pg_basebackup` from the primary:
 # On the secondary server (via SSH):
 sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_basebackup \
   -h <PRIMARY_IP> -U gitlab_repl -D /var/opt/gitlab/postgresql/data \
-  -X stream -c fast -R -P -S gitlab_geo_sync
+  -X stream -c fast -R -P -S gitlab_syncctl
 
 # Then start PostgreSQL:
 sudo gitlab-ctl start postgresql
@@ -137,10 +137,10 @@ sudo -u gitlab-psql /opt/gitlab/embedded/bin/psql \
 # Should return: t
 ```
 
-Or use geoctl (if it can SSH to the secondary and run commands):
+Or use syncctl (if it can SSH to the secondary and run commands):
 
 ```sh
-./bin/geoctl pg setup \
+./bin/syncctl pg setup \
   --secondary <secondary_name> \
   --data-dir /var/opt/gitlab/postgresql/data \
   -c config.yaml
@@ -157,14 +157,14 @@ sudo -u gitlab-psql /opt/gitlab/embedded/bin/psql \
 
 # Should show the secondary with state=streaming.
 
-# Via geoctl:
-./bin/geoctl pg status -c config.yaml
+# Via syncctl:
+./bin/syncctl pg status -c config.yaml
 ```
 
 ### Step 7: Run a single sync sweep
 
 ```sh
-./bin/geoctl sync -c config.yaml
+./bin/syncctl sync -c config.yaml
 ```
 
 This runs all reconcilers once and prints results:
@@ -179,7 +179,7 @@ synced yet. Subsequent runs should show `[OK]`.
 ### Step 8: Start the sync engine (continuous)
 
 ```sh
-./bin/geoctl serve -c config.yaml
+./bin/syncctl serve -c config.yaml
 ```
 
 This runs all reconcilers on the configured sweep interval (default 5min)
@@ -204,22 +204,22 @@ the **secondary** GitLab:
 ### Step 10: Verify metrics
 
 ```sh
-curl http://localhost:9101/metrics | grep geo_sync
+curl http://localhost:9101/metrics | grep syncctl
 ```
 
 Key metrics to check:
-- `geo_sync_pg_replay_lag_seconds` — should be < 1s.
-- `geo_sync_drift_total` — should not be increasing.
-- `geo_sync_last_sync_timestamp_seconds` — should be recent.
+- `syncctl_pg_replay_lag_seconds` — should be < 1s.
+- `syncctl_drift_total` — should not be increasing.
+- `syncctl_last_sync_timestamp_seconds` — should be recent.
 
 ### Step 11: Test failover (DRILL — do this on a non-production system)
 
 ```sh
 # Dry run first:
-./bin/geoctl failover --secondary <name> --dry-run -c config.yaml
+./bin/syncctl failover --secondary <name> --dry-run -c config.yaml
 
 # Real failover (requires --yes or config sync.failover_enabled=true):
-./bin/geoctl failover --secondary <name> --yes -c config.yaml
+./bin/syncctl failover --secondary <name> --yes -c config.yaml
 ```
 
 This will:
@@ -236,19 +236,19 @@ After failover, the secondary is now the primary. Verify:
 
 To reverse (make the old primary a secondary again):
 ```sh
-./bin/geoctl adopt-as-secondary --old-primary-ssh <old_primary:22> -c config.yaml
+./bin/syncctl adopt-as-secondary --old-primary-ssh <old_primary:22> -c config.yaml
 ```
 
 ### Step 12: Generate a runbook for your environment
 
 ```sh
-./bin/geoctl runbook -c config.yaml > runbook.md
+./bin/syncctl runbook -c config.yaml > runbook.md
 ```
 
 ### Step 13: Check SLA
 
 ```sh
-./bin/geoctl sla -c config.yaml
+./bin/syncctl sla -c config.yaml
 ```
 
 ## Troubleshooting
@@ -260,12 +260,12 @@ replication. Add a line:
 host replication gitlab_repl <SECONDARY_IP>/32 md5
 ```
 
-### `geoctl doctor` reports db_key_base MISMATCH
+### `syncctl doctor` reports db_key_base MISMATCH
 The `db_key_base` on the secondary doesn't match the primary. SSH to the
 secondary, edit `/etc/gitlab/gitlab.rb`, copy the value from the primary,
 and run `sudo gitlab-ctl reconfigure`.
 
-### `geo_sync_pg_replay_lag_seconds` is always -1
+### `syncctl_pg_replay_lag_seconds` is always -1
 The secondary's `application_name` in `primary_conninfo` doesn't match
 the secondary's name in config. The `pg_stat_replication` row on the
 primary won't be found. Fix by setting `application_name=<secondary_name>`
@@ -286,15 +286,15 @@ Wait for the next sweep — if drift persists, check PG replay lag.
 
 | Command | Purpose |
 |---|---|
-| `geoctl init` | Generate config via wizard |
-| `geoctl config-validate` | Validate config |
-| `geoctl doctor` | Check prerequisites on both sites |
-| `geoctl pg setup` | Bootstrap secondary as streaming replica |
-| `geoctl pg status` | Show PG replication lag |
-| `geoctl sync` | Run one reconciliation sweep |
-| `geoctl serve` | Run sync engine continuously |
-| `geoctl dbkey` | Verify db_key_base parity |
-| `geoctl failover` | Promote secondary to primary |
-| `geoctl adopt-as-secondary` | Role-swap old primary |
-| `geoctl runbook` | Generate operational runbook |
-| `geoctl sla` | Show RPO/RTO summary |
+| `syncctl init` | Generate config via wizard |
+| `syncctl config-validate` | Validate config |
+| `syncctl doctor` | Check prerequisites on both sites |
+| `syncctl pg setup` | Bootstrap secondary as streaming replica |
+| `syncctl pg status` | Show PG replication lag |
+| `syncctl sync` | Run one reconciliation sweep |
+| `syncctl serve` | Run sync engine continuously |
+| `syncctl dbkey` | Verify db_key_base parity |
+| `syncctl failover` | Promote secondary to primary |
+| `syncctl adopt-as-secondary` | Role-swap old primary |
+| `syncctl runbook` | Generate operational runbook |
+| `syncctl sla` | Show RPO/RTO summary |

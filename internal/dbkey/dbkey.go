@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 var dbKeyRe = regexp.MustCompile(`^\s*gitlab_rails\['db_key_base'\]\s*=\s*['"]?([A-Za-z0-9_-]+)`)

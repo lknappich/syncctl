@@ -27,7 +27,7 @@ vuln:
 	govulncheck ./...
 
 docker:
-	docker build -t geoctl:dev .
+	docker build -t syncctl:dev .
 
 release-snapshot:
 	goreleaser release --snapshot --clean
@@ -36,4 +36,4 @@ clean:
 	rm -f coverage.txt
 
 install:
-	go install ./cmd/geoctl
+	go install ./cmd/syncctl

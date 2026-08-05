@@ -79,7 +79,7 @@ metrics:
 log:
   level: debug
   format: text
-control_db: sqlite://data/geoctl.db
+control_db: sqlite://data/syncctl.db
 `
 	path := writeTempConfig(t, yaml)
 	cfg, err := Load(path)
@@ -259,7 +259,7 @@ func TestReplicationDSNContainsAppName(t *testing.T) {
 		ReplicationPassword: "secret",
 	}
 	dsn := pg.ReplicationDSN()
-	if !strings.Contains(dsn, "application_name=gitlab-geo-sync") {
+	if !strings.Contains(dsn, "application_name=syncctl") {
 		t.Errorf("expected application_name in replication DSN, got: %s", dsn)
 	}
 	if !strings.Contains(dsn, "sslmode=require") {

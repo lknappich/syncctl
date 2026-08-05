@@ -9,7 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/metrics"
+	"github.com/lknappich/syncctl/internal/metrics"
 )
 
 func TestGeneratePrintsReport(t *testing.T) {

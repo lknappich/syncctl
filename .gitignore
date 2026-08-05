@@ -1,5 +1,5 @@
 /bin/
-/geoctl
+/syncctl
 /dist/
 /data/
 *.db
