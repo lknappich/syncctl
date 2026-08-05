@@ -121,16 +121,24 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 }
 
 func (r *Reconciler) rsyncPath(ctx context.Context, pair PathPair) error {
+	ep, err := sshexec.ParseEndpoint(r.sshHost)
+	if err != nil {
+		return err
+	}
+	sshCmd, err := r.sshCfg.SSHString(r.sshHost)
+	if err != nil {
+		return err
+	}
 	args := []string{
 		"-az", "--delete", "--checksum",
-		"-e", r.sshCfg.SSHString(),
+		"-e", sshCmd,
 		"--rsync-path", "sudo rsync",
 	}
 	if r.dryRun {
 		args = append(args, "--dry-run")
 	}
 	args = append(args,
-		fmt.Sprintf("%s:%s/", r.sshHost, pair.Src),
+		fmt.Sprintf("%s:%s/", ep.Destination(), pair.Src),
 		pair.Dst+"/",
 	)
 

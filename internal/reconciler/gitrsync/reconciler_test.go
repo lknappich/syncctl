@@ -167,10 +167,30 @@ func TestReconcileBuildsCorrectArgs(t *testing.T) {
 	if !strings.Contains(joined, "--delete") {
 		t.Errorf("args should include --delete: %s", joined)
 	}
-	if !strings.Contains(joined, "p:22:/src/") {
+	if !strings.Contains(joined, " p:/src/") {
 		t.Errorf("args should include source: %s", joined)
 	}
 	if !strings.Contains(joined, "/dst/") {
 		t.Errorf("args should include dest: %s", joined)
+	}
+	if !strings.Contains(joined, "-p 22") {
+		t.Errorf("port belongs in the -e ssh string: %s", joined)
+	}
+	if strings.Contains(joined, "p:22:") {
+		t.Errorf("port must not be left in the rsync target: %s", joined)
+	}
+}
+
+func TestReconcileRejectsMalformedSSHHost(t *testing.T) {
+	runner := &mockRunner{}
+	r := New(&config.SiteConfig{SSHHost: "p:not-a-port", Git: config.GitStorage{ReposPath: "/src"}},
+		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, false, sshexec.Config{})
+	r = r.WithRunner(runner)
+	res := r.Reconcile(context.Background())
+	if res.OK {
+		t.Error("expected not-OK for a malformed ssh_host")
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("rsync should not run with a malformed ssh_host, got %d calls", len(runner.calls))
 	}
 }

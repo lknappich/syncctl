@@ -44,7 +44,10 @@ type SiteConfig struct {
 	Git         GitStorage        `yaml:"git"`
 	ObjectStore ObjectStoreConfig `yaml:"object_storage"`
 	Registry    *RegistryConfig   `yaml:"registry,omitempty"`
-	SSHHost     string            `yaml:"ssh_host,omitempty"` // host:port for rsync/git
+	// SSHHost is the SSH destination for rsync, git fetch, and remote
+	// administration: "[user@]host[:port]". Bracket an IPv6 literal to
+	// give it a port ("[::1]:22").
+	SSHHost string `yaml:"ssh_host,omitempty"`
 }
 
 // PostgresConfig: connection details for streaming replication control.
@@ -356,6 +359,7 @@ func (c *Config) validate() error {
 		errs = append(errs, errors.New("primary.postgres.replication_password is required (via env)"))
 	}
 	c.warnInsecureSSL(&errs)
+	c.validateSSHHosts(&errs)
 	if c.Primary.Git.Mode == "" {
 		errs = append(errs, errors.New("primary.git.mode is required (rsync|fetch)"))
 	}
@@ -426,6 +430,25 @@ func (c *Config) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateSSHHosts rejects an ssh_host that cannot be parsed into a
+// destination and optional port. Catching it here turns a confusing
+// per-operation failure ("Could not resolve hostname host:22") into one
+// config error naming the field.
+func (c *Config) validateSSHHosts(errs *[]error) {
+	check := func(label, host string) {
+		if host == "" {
+			return
+		}
+		if _, err := sshexec.ParseEndpoint(host); err != nil {
+			*errs = append(*errs, fmt.Errorf("%s.ssh_host: %w", label, err))
+		}
+	}
+	check("primary", c.Primary.SSHHost)
+	for i, s := range c.Secondaries {
+		check(fmt.Sprintf("secondaries[%d]", i), s.SSHHost)
+	}
 }
 
 // warnInsecureSSL logs a warning for any connection that explicitly
