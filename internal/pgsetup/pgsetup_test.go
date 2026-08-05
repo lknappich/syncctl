@@ -3,6 +3,7 @@ package pgsetup
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,4 +255,74 @@ func TestInjectAppNameWithQuote(t *testing.T) {
 	if !strings.Contains(got, "application_name=myapp") {
 		t.Errorf("got %q", got)
 	}
+}
+
+func TestBuildBasebackupArgsCarriesNoPassword(t *testing.T) {
+	args := buildBasebackupArgs(Options{
+		PrimaryDSN: "host=h port=5432 user=repl dbname=replication sslmode=require",
+		Password:   "s3cr3t",
+		DataDir:    "/data",
+	})
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "s3cr3t") {
+		t.Errorf("password leaked onto the command line: %s", joined)
+	}
+	if strings.Contains(joined, "password=") {
+		t.Errorf("password field must not appear in argv: %s", joined)
+	}
+}
+
+func TestDryRunDoesNotPrintPassword(t *testing.T) {
+	out := captureStdout(t, func() {
+		err := Run(context.Background(), Options{
+			PrimaryDSN: "host=h user=repl password=leaked",
+			Password:   "s3cr3t",
+			DataDir:    t.TempDir(),
+			DryRun:     true,
+		})
+		if err != nil {
+			t.Fatalf("dry-run Run: %v", err)
+		}
+	})
+	for _, secret := range []string{"s3cr3t", "leaked"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("dry-run output leaked %q: %s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "password=***") {
+		t.Errorf("expected a redacted password field, got: %s", out)
+	}
+}
+
+func TestRedactDSN(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"host=h password=plain dbname=d", "host=h password=*** dbname=d"},
+		{"host=h password='with space' dbname=d", "host=h password=*** dbname=d"},
+		{`host=h password='it\'s' dbname=d`, "host=h password=*** dbname=d"},
+		{"host=h password=''", "host=h password=***"},
+		{"host=h dbname=d", "host=h dbname=d"},
+	}
+	for _, tc := range tests {
+		if got := RedactDSN(tc.in); got != tc.want {
+			t.Errorf("RedactDSN(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	_ = w.Close()
+	var sb strings.Builder
+	if _, err := io.Copy(&sb, r); err != nil {
+		t.Fatal(err)
+	}
+	return sb.String()
 }

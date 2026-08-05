@@ -546,3 +546,25 @@ func TestValidateSSHHosts(t *testing.T) {
 		})
 	}
 }
+
+func TestReplicationConnInfoOmitsPassword(t *testing.T) {
+	pg := PostgresConfig{
+		Host:                "db.example.com",
+		Port:                5432,
+		ReplicationUser:     "gitlab_repl",
+		ReplicationPassword: "s3cr3t",
+	}
+	dsn, password := pg.ReplicationConnInfo()
+	if strings.Contains(dsn, "password") {
+		t.Errorf("DSN must carry no password field: %s", dsn)
+	}
+	if strings.Contains(dsn, "s3cr3t") {
+		t.Errorf("password leaked into DSN: %s", dsn)
+	}
+	if password != "s3cr3t" {
+		t.Errorf("password = %q, want s3cr3t", password)
+	}
+	if !strings.Contains(dsn, "user=gitlab_repl") || !strings.Contains(dsn, "dbname=replication") {
+		t.Errorf("DSN lost its connection fields: %s", dsn)
+	}
+}

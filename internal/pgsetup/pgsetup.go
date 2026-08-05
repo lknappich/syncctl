@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -20,7 +21,12 @@ type basebackupRunner interface {
 
 // Options controls a pg_basebackup-based standby bootstrap.
 type Options struct {
+	// PrimaryDSN is the libpq conninfo for the primary. It MUST NOT
+	// contain a password — command lines are readable by every local
+	// user via /proc/<pid>/cmdline and ps. Supply the password in
+	// Password instead; it is passed to the child via PGPASSWORD.
 	PrimaryDSN string
+	Password   string
 	DataDir    string
 	SlotName   string
 	DryRun     bool
@@ -35,6 +41,9 @@ func defaultBasebackupFactory(ctx context.Context, opts Options) basebackupRunne
 		buildBasebackupArgs(opts)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if opts.Password != "" {
+		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+opts.Password)
+	}
 	return cmd
 }
 
@@ -44,6 +53,17 @@ func buildBasebackupArgs(opts Options) []string {
 		args = append(args, "-S", opts.SlotName, "--create-slot")
 	}
 	return args
+}
+
+// dsnPasswordRe matches a libpq password field, quoted or bare.
+var dsnPasswordRe = regexp.MustCompile(`password=('(?:[^'\\]|\\.)*'|[^\s]*)`)
+
+// RedactDSN replaces every libpq password value with ***. It is a
+// backstop for printing: callers should keep passwords out of DSNs in
+// the first place, but nothing that reaches a terminal or a log should
+// depend on that having been done correctly.
+func RedactDSN(s string) string {
+	return dsnPasswordRe.ReplaceAllString(s, "password=***")
 }
 
 // Run performs the setup: validates the data dir is empty or absent,
@@ -63,7 +83,10 @@ func Run(ctx context.Context, opts Options) error {
 
 	args := buildBasebackupArgs(opts)
 	if opts.DryRun {
-		fmt.Printf("[dry-run] pg_basebackup %s\n", strings.Join(args, " "))
+		fmt.Printf("[dry-run] pg_basebackup %s\n", RedactDSN(strings.Join(args, " ")))
+		if opts.Password != "" {
+			fmt.Println("[dry-run] PGPASSWORD supplied via environment")
+		}
 		return nil
 	}
 	fmt.Printf("running pg_basebackup into %s ...\n", opts.DataDir)

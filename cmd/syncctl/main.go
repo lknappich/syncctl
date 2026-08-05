@@ -365,8 +365,10 @@ func newPGSetupCmd(g *globalFlags) *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
 			defer cancel()
+			dsn, password := cfg.Primary.Postgres.ReplicationConnInfo()
 			return pgsetup.Run(ctx, pgsetup.Options{
-				PrimaryDSN: cfg.Primary.Postgres.ReplicationDSN(),
+				PrimaryDSN: dsn,
+				Password:   password,
 				DataDir:    dataDir,
 				SlotName:   sc.Postgres.SlotName,
 				DryRun:     g.dryRun,
