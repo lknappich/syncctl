@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 func TestNewControllerDefaults(t *testing.T) {

@@ -18,7 +18,7 @@ var Registry = prometheus.DefaultRegisterer
 var (
 	PGReplayLagSeconds = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "geo_sync",
+			Namespace: "syncctl",
 			Name:      "pg_replay_lag_seconds",
 			Help:      "PostgreSQL streaming replication replay lag in seconds, per secondary.",
 		},
@@ -27,7 +27,7 @@ var (
 
 	SyncDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "geo_sync",
+			Namespace: "syncctl",
 			Name:      "sync_duration_seconds",
 			Help:      "Duration of a sync reconciler run.",
 			Buckets:   prometheus.ExponentialBuckets(0.1, 2, 12),
@@ -37,7 +37,7 @@ var (
 
 	DriftTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "geo_sync",
+			Namespace: "syncctl",
 			Name:      "drift_total",
 			Help:      "Total number of detected drifts, by component and severity.",
 		},
@@ -46,7 +46,7 @@ var (
 
 	LastSyncTimestamp = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "geo_sync",
+			Namespace: "syncctl",
 			Name:      "last_sync_timestamp_seconds",
 			Help:      "Unix timestamp of the last successful sync, per component.",
 		},

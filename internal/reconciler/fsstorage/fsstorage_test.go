@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 func TestNewCollectsFSPaths(t *testing.T) {

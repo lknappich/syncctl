@@ -37,6 +37,6 @@ func Current() Info {
 
 // String returns a human-readable version banner.
 func (i Info) String() string {
-	return fmt.Sprintf("gitlab-geo-sync %s (commit=%s, built=%s, %s/%s)",
+	return fmt.Sprintf("syncctl %s (commit=%s, built=%s, %s/%s)",
 		i.Version, i.Commit, i.BuildDate, i.OS, i.Arch)
 }

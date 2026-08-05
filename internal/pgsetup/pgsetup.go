@@ -1,4 +1,4 @@
-// Package pgsetup implements `geoctl pg setup` — bootstraps a secondary
+// Package pgsetup implements `syncctl pg setup` — bootstraps a secondary
 // PostgreSQL as a physical streaming replica of the primary using
 // pg_basebackup, then writes the standby configuration.
 package pgsetup

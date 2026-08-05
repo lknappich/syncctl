@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/localcmd"
 )
 
 // GitRepair re-fetches a specific project repo from the primary.

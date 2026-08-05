@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 func TestToSet(t *testing.T) {

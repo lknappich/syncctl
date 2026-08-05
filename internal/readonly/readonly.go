@@ -14,7 +14,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 // Enable puts the secondary into read-only mode:

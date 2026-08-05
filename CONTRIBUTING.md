@@ -1,4 +1,4 @@
-# Contributing to gitlab-geo-sync
+# Contributing to syncctl
 
 Thanks for your interest. This project is a **clean-room** reimplementation
 of functionality available in GitLab's paid Enterprise Edition. To keep the

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 func TestGenerateBasic(t *testing.T) {

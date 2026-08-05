@@ -1,5 +1,5 @@
 // Package doctor runs prerequisite checks against both primary and
-// secondary GitLab sites to verify that geoctl can orchestrate
+// secondary GitLab sites to verify that syncctl can orchestrate
 // replication. It checks SSH connectivity, PostgreSQL reachability,
 // replication user privileges, db_key_base presence, rsync/git availability,
 // and object storage access.
@@ -13,9 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/dbkey"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/dbkey"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 // PoolFactory builds a *pgxpool.Pool from a DSN. Tests can inject a
@@ -291,7 +291,7 @@ func pgInRecoveryCheck(ctx context.Context, label string, pg config.PostgresConf
 	}
 	if !inRecovery {
 		return Check{Name: "pg:" + label + ":in_recovery", Category: "postgres",
-			Status: "WARN", Detail: "secondary PG is NOT in recovery mode (run `geoctl pg setup` first)"}
+			Status: "WARN", Detail: "secondary PG is NOT in recovery mode (run `syncctl pg setup` first)"}
 	}
 	return Check{Name: "pg:" + label + ":in_recovery", Category: "postgres",
 		Status: "PASS", Detail: "in recovery (standby)"}

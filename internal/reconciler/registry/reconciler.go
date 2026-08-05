@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/metrics"
-	"github.com/lknappich/gitlab-geo-sync/internal/reconciler"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/metrics"
+	"github.com/lknappich/syncctl/internal/reconciler"
 )
 
 const name = "registry"

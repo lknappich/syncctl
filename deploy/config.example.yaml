@@ -1,8 +1,8 @@
-# gitlab-geo-sync example configuration.
+# syncctl example configuration.
 #
 # All secret values MUST be supplied via environment variables using the
 # dollar-brace-VAR placeholder syntax. Literal secrets in this file are
-# rejected. Before running geoctl, export the referenced variables, e.g.:
+# rejected. Before running syncctl, export the referenced variables, e.g.:
 #
 #   export PG_CTRL_PASSWORD=...
 #   export PG_REPL_PASSWORD=...
@@ -21,7 +21,7 @@ primary:
     password: ${PG_CTRL_PASSWORD}
     replication_user: gitlab_repl
     replication_password: ${PG_REPL_PASSWORD}
-    slot_name: gitlab_geo_sync
+    slot_name: gitlab_syncctl
     # TLS: defaults to 'require' (never cleartext). Set to 'disable' only
     # for local dev (a warning is logged). Other valid values:
     # allow, prefer, verify-ca, verify-full.
@@ -99,7 +99,7 @@ log:
   level: info
   format: json
 
-control_db: sqlite://data/geoctl.db
+control_db: sqlite://data/syncctl.db
 
 # Optional: webhook receiver for immediate per-project sync on push/create/delete.
 # webhook:
@@ -116,7 +116,7 @@ control_db: sqlite://data/geoctl.db
 # Production deployments should pin host keys via known_hosts_file and
 # leave strict_host_key_checking at its default of "yes".
 # ssh:
-#   known_hosts_file: /etc/geoctl/known_hosts
+#   known_hosts_file: /etc/syncctl/known_hosts
 #   # strict_host_key_checking: yes  # default: yes when known_hosts_file is set, otherwise accept-new
 
 # Optional: failover controller.

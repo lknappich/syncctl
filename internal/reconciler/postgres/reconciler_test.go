@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 // --- Mocks ---

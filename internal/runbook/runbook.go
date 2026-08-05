@@ -8,7 +8,7 @@ import (
 	"io"
 	"text/template"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 // Generate writes a Markdown runbook to w based on cfg.
@@ -28,7 +28,7 @@ func Generate(w io.Writer, cfg *config.Config) error {
 	return tmpl.Execute(w, cfg)
 }
 
-const runbookTmpl = `# gitlab-geo-sync Operational Runbook
+const runbookTmpl = `# syncctl Operational Runbook
 
 Generated from your configuration.
 
@@ -50,7 +50,7 @@ after 3 consecutive health check failures ({{.Primary.ExternalURL}}).
 
 ### Manual
 
-    geoctl failover --secondary {{firstSecondaryName .}}
+    syncctl failover --secondary {{firstSecondaryName .}}
 
 ### Post-failover checklist
 
@@ -64,7 +64,7 @@ after 3 consecutive health check failures ({{.Primary.ExternalURL}}).
 
 When the old primary comes back online:
 
-    geoctl adopt-as-secondary --old-primary-ssh {{.Primary.SSHHost}}
+    syncctl adopt-as-secondary --old-primary-ssh {{.Primary.SSHHost}}
 
 This runs pg_basebackup from the new primary and reconfigures the old
 primary as a read-only secondary.
@@ -89,16 +89,16 @@ If you need to rotate the db_key_base (e.g. after a suspected compromise):
    GitLab's public docs for the current task name).
 4. Copy the new db_key_base to all secondaries.
 5. Run ` + "`gitlab-ctl reconfigure`" + ` on each secondary.
-6. Verify with: ` + "`geoctl dbkey`" + `
+6. Verify with: ` + "`syncctl dbkey`" + `
 
 ## 5. Monitoring
 
 - Metrics endpoint: {{.Metrics.Addr}}/metrics
 - Health endpoint: {{.Metrics.Addr}}/healthz
 - Key alerts:
-  - geo_sync_pg_replay_lag_seconds > 30s → warning
-  - geo_sync_drift_total increasing → investigate component
-  - geo_sync_last_sync_timestamp_seconds stale → reconciler stuck
+  - syncctl_pg_replay_lag_seconds > 30s → warning
+  - syncctl_drift_total increasing → investigate component
+  - syncctl_last_sync_timestamp_seconds stale → reconciler stuck
 
 ## 6. CI Runner Re-Pointing
 

@@ -1,7 +1,7 @@
 # AGENTS.md — clean-room & contribution policy
 
 This file governs how AI agents and human contributors must work on
-`gitlab-geo-sync`. It exists to keep the project legally clean: a true
+`syncctl`. It exists to keep the project legally clean: a true
 clean-room reimplementation of functionality that GitLab ships in its
 paid Enterprise Edition, using **only** public, documented interfaces.
 
@@ -11,7 +11,7 @@ paid Enterprise Edition, using **only** public, documented interfaces.
   tooling** — PostgreSQL physical streaming replication, `rsync`,
   `git fetch`, S3 bucket replication — to mirror a self-hosted GitLab
   instance to one or more replicas.
-- A control plane (`geoctl`) that monitors sync state, surfaces drift,
+- A control plane (`syncctl`) that monitors sync state, surfaces drift,
   and performs safe failover.
 - An optional observational validator that diffs public API outputs
   between sites (read-only; never writes via API as the replication
@@ -68,7 +68,7 @@ workflow also runs `govulncheck ./...` and `staticcheck ./...`.
 
 ## Style
 
-- Go. Single static binary via `cmd/geoctl`.
+- Go. Single static binary via `cmd/syncctl`.
 - No comments unless they explain *why*; the code should explain *what*.
 - Secrets via env only; reject literals in config.
 - Idempotent reconcilers: any run must be safe to retry.

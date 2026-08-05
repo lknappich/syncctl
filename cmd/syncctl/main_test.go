@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
+	"github.com/lknappich/syncctl/internal/config"
 )
 
 func TestVersionCmd(t *testing.T) {
@@ -27,8 +27,8 @@ func TestRootHelp(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("help: %v", err)
 	}
-	if !strings.Contains(out.String(), "geoctl") {
-		t.Errorf("expected 'geoctl' in help: %s", out.String())
+	if !strings.Contains(out.String(), "syncctl") {
+		t.Errorf("expected 'syncctl' in help: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "version") {
 		t.Errorf("expected 'version' subcommand in help: %s", out.String())

@@ -11,10 +11,10 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/config"
-	"github.com/lknappich/gitlab-geo-sync/internal/dbkey"
-	"github.com/lknappich/gitlab-geo-sync/internal/readonly"
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/config"
+	"github.com/lknappich/syncctl/internal/dbkey"
+	"github.com/lknappich/syncctl/internal/readonly"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 // Controller monitors primary health and orchestrates failover.
@@ -97,7 +97,7 @@ func (c *Controller) check(ctx context.Context) {
 					log.Error().Err(err).Msg("auto-failover failed")
 				}
 			} else {
-				log.Error().Msg("primary declared down; auto-failover disabled — run `geoctl failover` manually")
+				log.Error().Msg("primary declared down; auto-failover disabled — run `syncctl failover` manually")
 			}
 		}
 	} else {
@@ -187,7 +187,7 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 	fmt.Println("1. Update DNS to point to the new primary:", secondary.ExternalURL)
 	fmt.Println("2. Re-point CI runners to the new primary coordinator URL")
 	fmt.Println("3. Update any integrations that reference the old primary URL")
-	fmt.Println("4. When the old primary recovers, run: geoctl adopt-as-secondary --secondary", c.cfg.Primary.Name)
+	fmt.Println("4. When the old primary recovers, run: syncctl adopt-as-secondary --secondary", c.cfg.Primary.Name)
 	fmt.Println("5. Verify webhook secrets and access tokens work (behavioral check)")
 
 	return nil

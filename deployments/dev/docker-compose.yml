@@ -36,7 +36,7 @@ services:
     ports: ["9000:9000", "9001:9001"]
     volumes: [minio-data:/data]
 
-  geoctl:
+  syncctl:
     build: .
     depends_on: [postgres-primary, postgres-secondary, minio]
     environment:
@@ -46,8 +46,8 @@ services:
       S3_AK: ${S3_AK:-minioadmin}
       S3_SK: ${S3_SK:-minioadmin}
     volumes:
-      - ./config.yaml:/etc/geoctl/config.yaml:ro
-    command: ["serve", "-c", "/etc/geoctl/config.yaml"]
+      - ./config.yaml:/etc/syncctl/config.yaml:ro
+    command: ["serve", "-c", "/etc/syncctl/config.yaml"]
 
 volumes:
   pg-primary:

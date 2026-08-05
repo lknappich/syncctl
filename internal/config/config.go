@@ -1,4 +1,4 @@
-// Package config defines the runtime configuration for gitlab-geo-sync.
+// Package config defines the runtime configuration for syncctl.
 //
 // Configuration is loaded from a YAML file. All secret values MUST be
 // supplied via environment variables referenced by ${ENV_VAR} placeholders
@@ -19,7 +19,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/sshexec"
+	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
 // Config is the root configuration object.
@@ -49,7 +49,7 @@ type SiteConfig struct {
 
 // PostgresConfig: connection details for streaming replication control.
 type PostgresConfig struct {
-	// Host/Port/DB/User/Password are the control connection (used by geoctl
+	// Host/Port/DB/User/Password are the control connection (used by syncctl
 	// to query pg_stat_replication, not the streaming receiver itself,
 	// which uses PrimaryConnInfo).
 	Host     string `yaml:"host"`
@@ -137,7 +137,7 @@ type SyncConfig struct {
 	// LagCriticalThreshold: emit critical + page (via DriftTotal) above.
 	LagCriticalThreshold time.Duration `yaml:"lag_critical_threshold"`
 
-	// FailoverEnabled: if true, geoctl failover is permitted (requires
+	// FailoverEnabled: if true, syncctl failover is permitted (requires
 	// quorum + --yes). Set false to forbid automated promotion.
 	FailoverEnabled bool `yaml:"failover_enabled"`
 
@@ -404,7 +404,7 @@ func (c *Config) validate() error {
 		c.Log.Format = "json"
 	}
 	if c.ControlDB == "" {
-		c.ControlDB = "sqlite://data/geoctl.db"
+		c.ControlDB = "sqlite://data/syncctl.db"
 	}
 	if c.Sync.ConsistencySamplePct == 0 {
 		c.Sync.ConsistencySamplePct = 0.01
@@ -466,7 +466,7 @@ func (p PostgresConfig) DSN() string {
 // ReplicationDSN constructs a libpq connection string for the WAL receiver.
 func (p PostgresConfig) ReplicationDSN() string {
 	return p.buildDSN(p.ReplicationUser, p.ReplicationPassword, "replication",
-		"application_name=gitlab-geo-sync")
+		"application_name=syncctl")
 }
 
 func (p PostgresConfig) buildDSN(user, password, dbname, extra string) string {

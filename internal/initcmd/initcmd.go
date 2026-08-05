@@ -1,4 +1,4 @@
-// Package initcmd implements `geoctl init` — an interactive wizard that
+// Package initcmd implements `syncctl init` — an interactive wizard that
 // generates a config.yaml by asking questions about the primary and
 // secondary GitLab instances.
 package initcmd
@@ -56,9 +56,9 @@ func RunWithInput(r io.Reader, w io.Writer) (*Answers, error) {
 	out := func(format string, args ...any) {
 		_, _ = fmt.Fprintf(w, format, args...)
 	}
-	out("\n=== gitlab-geo-sync configuration wizard ===\n\n")
+	out("\n=== syncctl configuration wizard ===\n\n")
 	out("This will generate a config.yaml. All secrets will be\n")
-	out("referenced as ${ENV_VAR} placeholders — export them before running geoctl.\n")
+	out("referenced as ${ENV_VAR} placeholders — export them before running syncctl.\n")
 
 	// --- Primary ---
 	out("\n--- PRIMARY ---\n")
@@ -189,7 +189,7 @@ func GenerateYAML(a *Answers, w io.Writer) error {
 	b.WriteString("\nlog:\n")
 	b.WriteString("  level: info\n")
 	b.WriteString("  format: json\n")
-	b.WriteString("\ncontrol_db: sqlite://data/geoctl.db\n")
+	b.WriteString("\ncontrol_db: sqlite://data/syncctl.db\n")
 
 	_, err := io.WriteString(w, b.String())
 	return err

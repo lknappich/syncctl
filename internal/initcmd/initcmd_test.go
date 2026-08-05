@@ -54,7 +54,7 @@ func TestGenerateYAMLS3(t *testing.T) {
 		"failover_enabled: true",
 		"read_only_secondary: true",
 		"sweep_interval: 5m",
-		"control_db: sqlite://data/geoctl.db",
+		"control_db: sqlite://data/syncctl.db",
 	}
 	for _, s := range required {
 		if !strings.Contains(out, s) {

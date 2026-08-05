@@ -1,6 +1,6 @@
-# gitlab-geo-sync
+# syncctl
 
-`gitlab-geo-sync` is an open-source tool that performs **full one-to-one
+`syncctl` is an open-source tool that performs **full one-to-one
 geo-replication** between self-hosted GitLab instances — a primary and one
 or more secondaries — using only public, documented interfaces and standard
 infrastructure tooling. It is **not** GitLab Geo (a paid Premium/Ultimate
@@ -24,7 +24,7 @@ clean-room, independent implementation licensed under Apache-2.0.
 | Webhook receiver | ✅ | Immediate per-project sync with debouncing + concurrency cap |
 | Failover | ✅ | Health-check loop + human-gated promotion + role-swap |
 | Doctor | ✅ | Prerequisite checks (SSH, PG, replication, db_key_base, tools) |
-| Init wizard | ✅ | Interactive `geoctl init` config generator |
+| Init wizard | ✅ | Interactive `syncctl init` config generator |
 | Runbook | ✅ | Markdown runbook generation from config |
 | SLA report | ✅ | RPO/RTO summary from Prometheus metrics |
 
@@ -77,7 +77,7 @@ and the honest limits of each strategy.
 
 ```sh
 # 1. Generate a config via the interactive wizard.
-geoctl init -o config.yaml
+syncctl init -o config.yaml
 
 # 2. Export the required environment variables (secrets are env-only).
 export PG_CTRL_PASSWORD=...
@@ -87,36 +87,36 @@ export S3_AK=...
 export S3_SK=...
 
 # 3. Validate config and check prerequisites.
-geoctl config-validate -c config.yaml
-geoctl doctor -c config.yaml
+syncctl config-validate -c config.yaml
+syncctl doctor -c config.yaml
 
 # 4. Bootstrap the secondary's PostgreSQL as a streaming replica.
-geoctl pg setup --secondary <name> --data-dir /var/opt/gitlab/postgresql/data
+syncctl pg setup --secondary <name> --data-dir /var/opt/gitlab/postgresql/data
 
 # 5. Verify db_key_base parity between primary and secondary.
-geoctl dbkey -c config.yaml
+syncctl dbkey -c config.yaml
 
 # 6. Start the sync engine (reconcilers + metrics + webhook + failover).
-geoctl serve -c config.yaml
+syncctl serve -c config.yaml
 ```
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `geoctl version` | Print build version |
-| `geoctl init` | Interactive config wizard |
-| `geoctl config-validate` | Load and validate config, print summary |
-| `geoctl doctor` | Check prerequisites on primary and secondary |
-| `geoctl pg setup` | Bootstrap secondary via `pg_basebackup` |
-| `geoctl pg status` | Show PostgreSQL replication lag |
-| `geoctl sync` | Run one reconciliation sweep |
-| `geoctl dbkey` | Verify `db_key_base` parity |
-| `geoctl failover` | Promote a secondary to primary (human-gated) |
-| `geoctl adopt-as-secondary` | Role-swap old primary to secondary |
-| `geoctl runbook` | Generate operational runbook from config |
-| `geoctl sla` | Print RPO/RTO summary from metrics |
-| `geoctl serve` | Run sync engine (reconcilers + metrics + webhook + failover) |
+| `syncctl version` | Print build version |
+| `syncctl init` | Interactive config wizard |
+| `syncctl config-validate` | Load and validate config, print summary |
+| `syncctl doctor` | Check prerequisites on primary and secondary |
+| `syncctl pg setup` | Bootstrap secondary via `pg_basebackup` |
+| `syncctl pg status` | Show PostgreSQL replication lag |
+| `syncctl sync` | Run one reconciliation sweep |
+| `syncctl dbkey` | Verify `db_key_base` parity |
+| `syncctl failover` | Promote a secondary to primary (human-gated) |
+| `syncctl adopt-as-secondary` | Role-swap old primary to secondary |
+| `syncctl runbook` | Generate operational runbook from config |
+| `syncctl sla` | Print RPO/RTO summary from metrics |
+| `syncctl serve` | Run sync engine (reconcilers + metrics + webhook + failover) |
 
 ## Security
 

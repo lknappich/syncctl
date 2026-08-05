@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/lknappich/gitlab-geo-sync/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/localcmd"
 )
 
 func TestRepoDiskPathLegacy(t *testing.T) {

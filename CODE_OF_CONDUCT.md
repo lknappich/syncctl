@@ -61,7 +61,7 @@ appointed representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement via GitHub's
 private vulnerability reporting at
-https://github.com/lknappich/gitlab-geo-sync/security/advisories/new,
+https://github.com/lknappich/syncctl/security/advisories/new,
 or by opening a private issue in the repository.
 All complaints will be reviewed and investigated promptly and fairly.
 

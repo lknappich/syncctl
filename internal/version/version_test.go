@@ -8,7 +8,7 @@ import (
 func TestCurrentString(t *testing.T) {
 	v := Current()
 	s := v.String()
-	if !strings.Contains(s, "gitlab-geo-sync") {
-		t.Errorf("expected version string to contain 'gitlab-geo-sync', got: %s", s)
+	if !strings.Contains(s, "syncctl") {
+		t.Errorf("expected version string to contain 'syncctl', got: %s", s)
 	}
 }

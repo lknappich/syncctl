@@ -10,7 +10,7 @@ backported to the current release branch only.
 Report security vulnerabilities privately via GitHub's built-in
 private vulnerability reporting:
 
-  https://github.com/lknappich/gitlab-geo-sync/security/advisories/new
+  https://github.com/lknappich/syncctl/security/advisories/new
 
 Do not open a public issue. Include:
 - A description of the vulnerability and its impact
@@ -22,7 +22,7 @@ appreciated — we will credit reporters in release notes.
 
 ## SSH and sudo trust model
 
-`geoctl` executes SSH commands on the primary and secondary GitLab hosts.
+`syncctl` executes SSH commands on the primary and secondary GitLab hosts.
 Some of these commands use `sudo` to perform privileged operations.
 The following table enumerates every `sudo` command the tool runs:
 
@@ -43,23 +43,23 @@ Configure a locked-down sudoers allowlist on each host rather than
 granting blanket `NOPASSWD: ALL`. Example for the secondary:
 
 ```
-geoctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl deploy-registry-readonly *
-geoctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl sidekiq *
-geoctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl stop
-geoctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl start
-geoctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_ctl promote *
-geoctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_basebackup *
-geoctl ALL=(root) NOPASSWD: /opt/gitlab/embedded/bin/gitlab-rails runner *
+syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl deploy-registry-readonly *
+syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl sidekiq *
+syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl stop
+syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl start
+syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_ctl promote *
+syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_basebackup *
+syncctl ALL=(root) NOPASSWD: /opt/gitlab/embedded/bin/gitlab-rails runner *
 ```
 
 ### Host key verification
 
-By default `geoctl` uses `StrictHostKeyChecking=accept-new` (TOFU). For
+By default `syncctl` uses `StrictHostKeyChecking=accept-new` (TOFU). For
 production deployments, pin host keys by setting:
 
 ```yaml
 ssh:
-  known_hosts_file: /etc/geoctl/known_hosts
+  known_hosts_file: /etc/syncctl/known_hosts
 ```
 
 This switches the default to `StrictHostKeyChecking=yes`, refusing
@@ -73,7 +73,7 @@ true 1:1 replica, the secondary must share the primary's `db_key_base`
 so the GitLab application itself can decrypt these columns on the
 secondary.
 
-This tool copies and verifies the key parity via SSH (`geoctl dbkey`).
+This tool copies and verifies the key parity via SSH (`syncctl dbkey`).
 It never decrypts anything — it only compares the key bytes. Sharing
 `db_key_base` across sites is legitimate when you own both servers and
 is the only way to achieve a functional 1:1 replica.
