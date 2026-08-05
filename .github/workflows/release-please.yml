@@ -3,8 +3,14 @@ name: Release Please
 # Maintains a rolling "chore(main): release X.Y.Z" pull request built from
 # Conventional Commit messages on main. Merging that PR is what cuts a
 # release: release-please tags the merge commit and creates the GitHub
-# release, then this workflow calls the Release workflow to build and
-# publish the artifacts for that tag.
+# release as a draft, then this workflow calls the Release workflow to
+# attach the built artifacts to it.
+#
+# The draft matters. GitHub freezes assets on a release once it is
+# published (immutable releases), so a published release cannot be filled
+# in afterwards — goreleaser gets a 422. release-please therefore leaves
+# it in draft and goreleaser, which is also configured for draft, uploads
+# into it. Publishing stays a deliberate manual step.
 on:
   push:
     branches: [main]
