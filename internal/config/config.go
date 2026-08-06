@@ -494,15 +494,35 @@ func (p PostgresConfig) ReplicationDSN() string {
 		"application_name=syncctl")
 }
 
+// ReplicationConnInfo returns the replication DSN with no password field,
+// plus the password separately. Callers that hand the DSN to an external
+// process must use this and pass the password out of band (PGPASSWORD or
+// a passfile) — anything on a command line is world-readable via
+// /proc/<pid>/cmdline and ps.
+func (p PostgresConfig) ReplicationConnInfo() (dsn, password string) {
+	return p.dsnFrom(p.ReplicationUser, nil, "replication",
+		"application_name=syncctl"), p.ReplicationPassword
+}
+
 func (p PostgresConfig) buildDSN(user, password, dbname, extra string) string {
+	return p.dsnFrom(user, &password, dbname, extra)
+}
+
+// dsnFrom builds a libpq DSN. A nil password omits the field entirely, so
+// libpq falls back to PGPASSWORD or a passfile.
+func (p PostgresConfig) dsnFrom(user string, password *string, dbname, extra string) string {
 	pairs := []kv{
 		{"host", p.Host},
 		{"port", strconv.Itoa(p.Port)},
 		{"user", user},
-		{"password", password},
-		{"dbname", dbname},
-		{"sslmode", p.effectiveSSLMode()},
 	}
+	if password != nil {
+		pairs = append(pairs, kv{"password", *password})
+	}
+	pairs = append(pairs,
+		kv{"dbname", dbname},
+		kv{"sslmode", p.effectiveSSLMode()},
+	)
 	if p.SSLRootCert != "" {
 		pairs = append(pairs, kv{"sslrootcert", p.SSLRootCert})
 	}
