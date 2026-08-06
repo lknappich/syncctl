@@ -57,3 +57,18 @@ func TestRunnerStopsOnContextCancel(t *testing.T) {
 		t.Fatal("runner did not stop within 1s")
 	}
 }
+
+func TestQualifyName(t *testing.T) {
+	tests := []struct {
+		base, site, want string
+	}{
+		{"git_rsync", "secondary-us", "git_rsync@secondary-us"},
+		{"git_rsync", "", "git_rsync"},
+		{"db:projects", "secondary-eu", "db:projects@secondary-eu"},
+	}
+	for _, tc := range tests {
+		if got := QualifyName(tc.base, tc.site); got != tc.want {
+			t.Errorf("QualifyName(%q, %q) = %q, want %q", tc.base, tc.site, got, tc.want)
+		}
+	}
+}

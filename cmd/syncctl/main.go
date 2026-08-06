@@ -242,37 +242,49 @@ func buildReconcilers(ctx context.Context, cfg *config.Config, dryRun bool) ([]r
 	recs = append(recs, pgRec)
 	cleanups = append(cleanups, pgRec.Close)
 
-	if len(cfg.Secondaries) == 0 {
-		cleanup := func() {
-			for _, c := range cleanups {
-				c()
-			}
+	cleanup := func() {
+		for _, c := range cleanups {
+			c()
 		}
-		return recs, cleanup, nil
 	}
-	s := &cfg.Secondaries[0]
+
+	// Every secondary gets its own reconciler set. Building only for
+	// Secondaries[0] left every replica after the first with nothing but
+	// Postgres lag monitoring, diverging silently.
+	for i := range cfg.Secondaries {
+		s := &cfg.Secondaries[i]
+		siteRecs, err := buildSiteReconcilers(ctx, cfg, s, pgRec, dryRun)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+		recs = append(recs, siteRecs...)
+	}
+
+	return recs, cleanup, nil
+}
+
+// buildSiteReconcilers constructs the reconcilers that replicate the
+// primary to one secondary.
+func buildSiteReconcilers(ctx context.Context, cfg *config.Config, s *config.SiteConfig,
+	pgRec *pgreconciler.Reconciler, dryRun bool) ([]reconciler.Reconciler, error) {
+	var recs []reconciler.Reconciler
 
 	// Git data sync.
 	switch cfg.Primary.Git.Mode {
 	case "rsync":
 		recs = append(recs, gitrsync.New(&cfg.Primary, s, dryRun, cfg.SSHExecConfig()))
 	case "fetch":
-		recs = append(recs, gitfetch.New(cfg.Primary.SSHHost, s.Git.ReposPath, s.Name, pgRec.PrimaryPool(), dryRun, cfg.SSHExecConfig()))
+		recs = append(recs, gitfetch.New(cfg.Primary.SSHHost, s.Git.ReposPath, s.Name,
+			pgRec.PrimaryPool(), dryRun, cfg.SSHExecConfig()))
 	}
 
 	// Object storage.
 	switch cfg.Primary.ObjectStore.Backend {
 	case "s3":
-		var secS3 *config.S3Config
-		if len(cfg.Secondaries) > 0 && cfg.Secondaries[0].ObjectStore.S3 != nil {
-			secS3 = cfg.Secondaries[0].ObjectStore.S3
-		}
-		osRec, err := objectstorage.New(ctx, cfg.Primary.ObjectStore.S3, secS3)
+		osRec, err := objectstorage.New(ctx, s.Name, cfg.Primary.ObjectStore.S3, s.ObjectStore.S3)
 		if err != nil {
-			for _, c := range cleanups {
-				c()
-			}
-			return nil, func() {}, fmt.Errorf("object storage reconciler: %w", err)
+			return nil, fmt.Errorf("object storage reconciler for %s: %w", s.Name, err)
 		}
 		recs = append(recs, osRec)
 	case "fs":
@@ -295,15 +307,10 @@ func buildReconcilers(ctx context.Context, cfg *config.Config, dryRun bool) ([]r
 
 	// API validator (optional).
 	if cfg.APIValidator != nil && cfg.APIValidator.Enabled {
-		recs = append(recs, apivalidator.New(cfg))
+		recs = append(recs, apivalidator.New(cfg, s))
 	}
 
-	cleanup := func() {
-		for _, c := range cleanups {
-			c()
-		}
-	}
-	return recs, cleanup, nil
+	return recs, nil
 }
 
 // buildWebhookServer creates a webhook receiver wired to trigger

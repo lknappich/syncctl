@@ -76,7 +76,7 @@ func (r *Reconciler) WithPool(pool projectQuerier) *Reconciler {
 	return &cp
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.secondaryName) }
 
 // Reconcile queries the DB for all project repository paths, then runs
 // `git fetch --prune` on each local repo against the primary's SSH URL.
@@ -86,7 +86,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 
 	projects, err := r.listProjects(ctx)
 	if err != nil {
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{OK: false, Detail: fmt.Sprintf("list projects: %v", err), Remaining: 1}
 	}
 
@@ -130,10 +130,10 @@ loop:
 	if failed > 0 {
 		resultStr = "error"
 	}
-	metrics.SyncDurationSeconds.WithLabelValues(name, resultStr).Observe(elapsed.Seconds())
+	metrics.SyncDurationSeconds.WithLabelValues(r.Name(), resultStr).Observe(elapsed.Seconds())
 
 	if failed > 0 {
-		metrics.DriftTotal.WithLabelValues(name, "warning").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "warning").Inc()
 		return reconciler.Result{
 			OK:        false,
 			Detail:    fmt.Sprintf("fetched %d/%d projects in %s (%d failed, parallel=%d)", repaired, len(projects), elapsed, failed, parallel),
@@ -141,7 +141,7 @@ loop:
 			Remaining: int(failed),
 		}
 	}
-	metrics.LastSyncTimestamp.WithLabelValues(name).Set(float64(time.Now().Unix()))
+	metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
 	return reconciler.Result{
 		OK:       true,
 		Detail:   fmt.Sprintf("fetched %d projects in %s (parallel=%d)", len(projects), elapsed, parallel),

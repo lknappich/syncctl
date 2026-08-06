@@ -20,6 +20,7 @@ const name = "fs_storage"
 
 // Reconciler rsyncs multiple filesystem paths from primary to secondary.
 type Reconciler struct {
+	site      string
 	sshHost   string
 	sshCfg    sshexec.Config
 	pathPairs []PathPair
@@ -37,6 +38,7 @@ type PathPair struct {
 // New creates an FS storage reconciler from the primary/secondary configs.
 func New(primary, secondary *config.SiteConfig, dryRun bool, sshCfg sshexec.Config) *Reconciler {
 	r := &Reconciler{
+		site:    secondary.Name,
 		sshHost: primary.SSHHost,
 		sshCfg:  sshCfg,
 		dryRun:  dryRun,
@@ -71,7 +73,7 @@ func (r *Reconciler) WithRunner(runner localcmd.Runner) *Reconciler {
 // PathPairs returns the configured path pairs (for test inspection).
 func (r *Reconciler) PathPairs() []PathPair { return r.pathPairs }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.site) }
 
 // Reconcile rsyncs each path pair sequentially.
 func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
@@ -91,7 +93,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		}
 		if err := r.rsyncPath(ctx, pair); err != nil {
 			failed++
-			metrics.DriftTotal.WithLabelValues(name+":"+pair.Src, "critical").Inc()
+			metrics.DriftTotal.WithLabelValues(r.Name()+":"+pair.Src, "critical").Inc()
 		} else {
 			repaired++
 		}
@@ -102,7 +104,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	if failed > 0 {
 		resultStr = "error"
 	}
-	metrics.SyncDurationSeconds.WithLabelValues(name, resultStr).Observe(elapsed.Seconds())
+	metrics.SyncDurationSeconds.WithLabelValues(r.Name(), resultStr).Observe(elapsed.Seconds())
 
 	if failed > 0 {
 		return reconciler.Result{
@@ -112,7 +114,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 			Remaining: failed,
 		}
 	}
-	metrics.LastSyncTimestamp.WithLabelValues(name).Set(float64(time.Now().Unix()))
+	metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
 	return reconciler.Result{
 		OK:       true,
 		Detail:   fmt.Sprintf("rsynced %d paths in %s", len(r.pathPairs), elapsed),

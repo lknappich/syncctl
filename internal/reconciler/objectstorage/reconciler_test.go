@@ -17,7 +17,7 @@ import (
 )
 
 func TestNewRejectsNilPrimary(t *testing.T) {
-	_, err := New(context.Background(), nil, nil)
+	_, err := New(context.Background(), "s", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for nil primary")
 	}

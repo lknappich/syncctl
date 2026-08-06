@@ -21,6 +21,7 @@ const name = "git_rsync"
 
 // Reconciler rsyncs the primary git-data tree to the secondary.
 type Reconciler struct {
+	site    string
 	sshHost string
 	srcPath string
 	dstPath string
@@ -32,6 +33,7 @@ type Reconciler struct {
 // New creates a git rsync reconciler from a primary/secondary config pair.
 func New(primary, secondary *config.SiteConfig, dryRun bool, sshCfg sshexec.Config) *Reconciler {
 	return &Reconciler{
+		site:    secondary.Name,
 		sshHost: primary.SSHHost,
 		srcPath: primary.Git.ReposPath,
 		dstPath: secondary.Git.ReposPath,
@@ -50,7 +52,7 @@ func (r *Reconciler) WithRunner(runner localcmd.Runner) *Reconciler {
 	return &cp
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.site) }
 
 // Reconcile runs rsync over SSH from primary to secondary, with
 // --delete --checksum to ensure the destination is an exact mirror.
@@ -88,16 +90,16 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 
 	out, err := localcmd.RunWith(ctx, r.runner, "rsync", args, nil)
 	elapsed := time.Since(start)
-	metrics.SyncDurationSeconds.WithLabelValues(name, errResult(err)).Observe(elapsed.Seconds())
+	metrics.SyncDurationSeconds.WithLabelValues(r.Name(), errResult(err)).Observe(elapsed.Seconds())
 	if err != nil {
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{
 			OK:        false,
 			Detail:    fmt.Sprintf("rsync failed: %s: %s", err, strings.TrimSpace(string(out))),
 			Remaining: 1,
 		}
 	}
-	metrics.LastSyncTimestamp.WithLabelValues(name).Set(float64(time.Now().Unix()))
+	metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
 	detail := fmt.Sprintf("rsync ok in %s", elapsed)
 	if r.dryRun {
 		detail += " (dry-run)"

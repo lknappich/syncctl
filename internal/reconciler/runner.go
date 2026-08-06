@@ -25,6 +25,17 @@ type Reconciler interface {
 	Reconcile(ctx context.Context) Result
 }
 
+// QualifyName appends the site a reconciler is replicating to, so that
+// logs and the metric "component" label distinguish the instances when
+// more than one secondary is configured. An empty site leaves the base
+// name untouched.
+func QualifyName(base, site string) string {
+	if site == "" {
+		return base
+	}
+	return base + "@" + site
+}
+
 // Runner drives a set of reconcilers on a fixed interval until ctx is
 // cancelled. It records metrics and structured logs for each run.
 type Runner struct {

@@ -63,7 +63,7 @@ func (r *Reconciler) WithPools(primary, secondary rowQuerier) *Reconciler {
 	return &cp
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.secondaryName) }
 
 // Reconcile runs the full audit.
 func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
@@ -89,7 +89,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 			}
 			drifts++
 			result.Remaining++
-			metrics.DriftTotal.WithLabelValues("db:"+table, "warning").Inc()
+			metrics.DriftTotal.WithLabelValues(reconciler.QualifyName("db:"+table, r.secondaryName), "warning").Inc()
 			result.Detail = fmt.Sprintf("%s; %s drift: primary=%d secondary=%d", result.Detail, table, pCount, sCount)
 		}
 	}
@@ -177,7 +177,7 @@ func (r *Reconciler) sampleGitFsck(ctx context.Context) int {
 		repo := allRepos[rng.Intn(len(allRepos))]
 		if !gitFsck(ctx, repo) {
 			failed++
-			metrics.DriftTotal.WithLabelValues("git_fsck", "critical").Inc()
+			metrics.DriftTotal.WithLabelValues(reconciler.QualifyName("git_fsck", r.secondaryName), "critical").Inc()
 		}
 	}
 	return failed

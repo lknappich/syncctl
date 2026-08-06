@@ -23,6 +23,7 @@ const name = "api_validator"
 
 // Reconciler diffs API counts between primary and secondary.
 type Reconciler struct {
+	site           string
 	primaryURL     string
 	secondaryURL   string
 	primaryToken   string
@@ -30,11 +31,12 @@ type Reconciler struct {
 	client         *http.Client
 }
 
-// New creates an API validator from config.
-func New(cfg *config.Config) *Reconciler {
+// New creates an API validator for one secondary.
+func New(cfg *config.Config, secondary *config.SiteConfig) *Reconciler {
 	primaryURL := strings.TrimSuffix(cfg.Primary.ExternalURL, "/") + "/api/v4"
-	secondaryURL := strings.TrimSuffix(cfg.Secondaries[0].ExternalURL, "/") + "/api/v4"
+	secondaryURL := strings.TrimSuffix(secondary.ExternalURL, "/") + "/api/v4"
 	return &Reconciler{
+		site:           secondary.Name,
 		primaryURL:     primaryURL,
 		secondaryURL:   secondaryURL,
 		primaryToken:   cfg.APIValidator.PrimaryToken,
@@ -43,7 +45,7 @@ func New(cfg *config.Config) *Reconciler {
 	}
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.site) }
 
 // endpoints lists the API resources we diff by count.
 var endpoints = []struct {
@@ -78,7 +80,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		if pCount != sCount {
 			drifts++
 			result.Remaining++
-			metrics.DriftTotal.WithLabelValues("api:"+ep.label, "warning").Inc()
+			metrics.DriftTotal.WithLabelValues(
+				reconciler.QualifyName("api:"+ep.label, r.site), "warning").Inc()
 			result.Detail = fmt.Sprintf("%s; %s drift: primary=%d secondary=%d",
 				result.Detail, ep.label, pCount, sCount)
 		}
