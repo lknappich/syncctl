@@ -42,6 +42,9 @@ primary:
   object_storage:
     backend: s3
     s3:
+      # NOTE: this example pairs an EU primary with a US secondary to
+      # show the format. Doing that for real moves personal data across a
+      # border and needs a lawful transfer mechanism — see PRIVACY.md.
       region: eu-west-1
       primary_bucket: gitlab-primary
       replica_bucket: gitlab-replica

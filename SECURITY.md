@@ -67,6 +67,10 @@ connections to hosts whose key is not in the pinned known_hosts file.
 
 ## db_key_base sharing
 
+> Privacy consequence: sharing this key makes the secondary able to
+> decrypt every credential the primary holds. See
+> [`PRIVACY.md`](PRIVACY.md#the-secondary-is-not-a-lower-trust-environment).
+
 The `db_key_base` is GitLab's Rails secret used to encrypt webhook
 secrets, access tokens, 2FA seeds, and other sensitive columns. For a
 true 1:1 replica, the secondary must share the primary's `db_key_base`
@@ -150,3 +154,9 @@ rejection lands in the next major version; move your secrets to the
 environment before then.
 
 Secret values are never logged or printed.
+
+## Data protection
+
+[`PRIVACY.md`](PRIVACY.md) covers what personal data replication moves,
+the cross-border implications of a secondary in another jurisdiction,
+what reaches logs and metrics, and the absence of telemetry.

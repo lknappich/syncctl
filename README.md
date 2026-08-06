@@ -128,7 +128,24 @@ See [`SECURITY.md`](SECURITY.md) for the full security policy, including:
 - SSH host-key verification and sudo trust model
 - PostgreSQL TLS defaults (`sslmode=require`)
 - `db_key_base` sharing rationale
+- Network exposure of the metrics and webhook listeners
 - Private vulnerability disclosure process
+
+## Data protection
+
+See [`PRIVACY.md`](PRIVACY.md). Replication copies every table byte for
+byte, including names, email addresses, IP addresses, access tokens and
+2FA secrets, and the secondary shares `db_key_base` so it can decrypt all
+of it. Two points before you deploy:
+
+- **The secondary is not a lower-trust environment.** It is
+  credential-equivalent to the primary and needs equivalent controls.
+- **Putting the secondary in another country moves personal data across
+  a border**, which is regulated in its own right. The example config
+  pairs `eu-west-1` with `us-east-1` to show the format — it is not a
+  recommendation.
+
+`syncctl` has no telemetry and keeps no state of its own.
 
 ## Clean-room policy
 
