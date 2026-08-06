@@ -512,3 +512,37 @@ func TestResolveEnvExpandsSlice(t *testing.T) {
 		t.Errorf("Name = %q, want s1", c.Secondaries[0].Name)
 	}
 }
+
+func TestValidateSSHHosts(t *testing.T) {
+	tests := []struct {
+		name      string
+		primary   string
+		secondary string
+		wantErr   bool
+	}{
+		{name: "both empty"},
+		{name: "host only", primary: "p.example.com", secondary: "s.example.com"},
+		{name: "host and port", primary: "p.example.com:22", secondary: "s.example.com:2222"},
+		{name: "user and port", primary: "git@p.example.com:22", secondary: "s.example.com"},
+		{name: "bracketed ipv6", primary: "[::1]:22", secondary: "s.example.com"},
+		{name: "bad primary port", primary: "p.example.com:ssh", wantErr: true},
+		{name: "bad secondary port", primary: "p.example.com", secondary: "s:0", wantErr: true},
+		{name: "path in host", primary: "p.example.com/repos", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{
+				Primary:     SiteConfig{SSHHost: tc.primary},
+				Secondaries: []SiteConfig{{SSHHost: tc.secondary}},
+			}
+			var errs []error
+			c.validateSSHHosts(&errs)
+			if tc.wantErr && len(errs) == 0 {
+				t.Error("expected a validation error")
+			}
+			if !tc.wantErr && len(errs) != 0 {
+				t.Errorf("unexpected errors: %v", errs)
+			}
+		})
+	}
+}

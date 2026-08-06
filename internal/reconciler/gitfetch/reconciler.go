@@ -235,9 +235,19 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 		return false
 	}
 
+	ep, err := sshexec.ParseEndpoint(r.primarySSHHost)
+	if err != nil {
+		log.Warn().Err(err).Int32("project_id", p.ID).Msg("git fetch: bad ssh_host")
+		return false
+	}
+	sshCmd, err := r.sshCfg.SSHString(r.primarySSHHost)
+	if err != nil {
+		log.Warn().Err(err).Int32("project_id", p.ID).Msg("git fetch: bad ssh_host")
+		return false
+	}
+
 	localPath := filepath.Join(r.reposPath, p.RepoPath)
-	remoteURL := fmt.Sprintf("ssh://%s/var/opt/gitlab/git-data/repositories/%s",
-		r.primarySSHHost, p.RepoPath)
+	remoteURL := ep.GitURL("/var/opt/gitlab/git-data/repositories/" + p.RepoPath)
 
 	args := []string{
 		"-C", localPath,
@@ -254,7 +264,7 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 	projectTimeout, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	out, err := localcmd.RunWith(projectTimeout, r.runner, "git", args,
-		[]string{"GIT_SSH_COMMAND=" + r.sshCfg.SSHString()})
+		[]string{"GIT_SSH_COMMAND=" + sshCmd})
 	if err != nil {
 		log.Warn().Err(err).Int32("project_id", p.ID).
 			Str("repo", p.RepoPath).

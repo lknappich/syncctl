@@ -110,7 +110,7 @@ var _ localcmd.Runner = (*mockGitRunner)(nil)
 
 func TestReconcileNoProjects(t *testing.T) {
 	pool := &mockPool{rows: []projectRow{}}
-	r := (&Reconciler{reposPath: "/r", maxParallel: 1}).WithPool(pool)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool)
 	res := r.Reconcile(context.Background())
 	if !res.OK {
 		t.Errorf("expected OK with no projects, got: %s", res.Detail)
@@ -119,7 +119,7 @@ func TestReconcileNoProjects(t *testing.T) {
 
 func TestReconcilePoolError(t *testing.T) {
 	pool := &mockPool{err: errors.New("db down")}
-	r := (&Reconciler{reposPath: "/r", maxParallel: 1}).WithPool(pool)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool)
 	res := r.Reconcile(context.Background())
 	if res.OK {
 		t.Error("expected not-OK on pool error")
@@ -129,7 +129,7 @@ func TestReconcilePoolError(t *testing.T) {
 func TestReconcileFetchOneSuccess(t *testing.T) {
 	pool := &mockPool{rows: []projectRow{{ID: 1, RepoPath: "group/proj.git"}}}
 	runner := &mockGitRunner{out: []byte("")}
-	r := (&Reconciler{reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
 	res := r.Reconcile(context.Background())
 	if !res.OK {
 		t.Errorf("expected OK, got: %s", res.Detail)
@@ -142,7 +142,7 @@ func TestReconcileFetchOneSuccess(t *testing.T) {
 func TestReconcileFetchOneFailure(t *testing.T) {
 	pool := &mockPool{rows: []projectRow{{ID: 1, RepoPath: "group/proj.git"}}}
 	runner := &mockGitRunner{err: errors.New("fetch failed")}
-	r := (&Reconciler{reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
 	res := r.Reconcile(context.Background())
 	// fetchOne returns false on error; Reconcile still reports OK if no
 	// concurrency error, but counts the failure.
@@ -154,7 +154,7 @@ func TestReconcileFetchOneFailure(t *testing.T) {
 
 func TestFetchProjectSuccess(t *testing.T) {
 	runner := &mockGitRunner{out: []byte("")}
-	r := (&Reconciler{reposPath: "/r"}).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithRunner(runner)
 	err := r.FetchProject(context.TODO(), "group/proj")
 	if err != nil {
 		t.Fatalf("FetchProject: %v", err)
@@ -164,9 +164,33 @@ func TestFetchProjectSuccess(t *testing.T) {
 	}
 }
 
+func TestFetchProjectBuildsSSHURLWithPort(t *testing.T) {
+	runner := &mockGitRunner{out: []byte("")}
+	r := (&Reconciler{primarySSHHost: "git@p.example.com:2222", reposPath: "/r"}).WithRunner(runner)
+	if err := r.FetchProject(context.TODO(), "group/proj"); err != nil {
+		t.Fatalf("FetchProject: %v", err)
+	}
+	joined := strings.Join(runner.calls[0].args, " ")
+	want := "ssh://git@p.example.com:2222/var/opt/gitlab/git-data/repositories/group/proj.git"
+	if !strings.Contains(joined, want) {
+		t.Errorf("args = %q, want remote URL %q", joined, want)
+	}
+}
+
+func TestFetchProjectRejectsMalformedSSHHost(t *testing.T) {
+	runner := &mockGitRunner{out: []byte("")}
+	r := (&Reconciler{primarySSHHost: "p:not-a-port", reposPath: "/r"}).WithRunner(runner)
+	if err := r.FetchProject(context.TODO(), "group/proj"); err == nil {
+		t.Error("expected an error for a malformed ssh_host")
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("git should not run with a malformed ssh_host, got %d calls", len(runner.calls))
+	}
+}
+
 func TestFetchProjectDryRun(t *testing.T) {
 	runner := &mockGitRunner{}
-	r := (&Reconciler{reposPath: "/r", dryRun: true}).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", dryRun: true}).WithRunner(runner)
 	err := r.FetchProject(context.TODO(), "group/proj")
 	if err != nil {
 		t.Fatalf("dry-run FetchProject should succeed: %v", err)
@@ -181,7 +205,7 @@ func TestFetchProjectDryRun(t *testing.T) {
 func TestFetchProjectUsesHashedLayout(t *testing.T) {
 	pool := &mockPool{rows: []projectRow{{ID: 1}}, hashed: true}
 	runner := &mockGitRunner{out: []byte("")}
-	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(runner)
 	if err := r.FetchProject(context.TODO(), "group/proj"); err != nil {
 		t.Fatalf("FetchProject: %v", err)
 	}
@@ -197,7 +221,7 @@ func TestFetchProjectUsesHashedLayout(t *testing.T) {
 func TestFetchProjectUnknownProject(t *testing.T) {
 	pool := &mockPool{rows: []projectRow{}}
 	runner := &mockGitRunner{}
-	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(runner)
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(runner)
 	err := r.FetchProject(context.TODO(), "group/proj")
 	if err == nil {
 		t.Fatal("expected error for project missing from the DB")
@@ -209,7 +233,7 @@ func TestFetchProjectUnknownProject(t *testing.T) {
 
 func TestFetchProjectLookupError(t *testing.T) {
 	pool := &mockPool{err: errors.New("db down")}
-	r := (&Reconciler{reposPath: "/r"}).WithPool(pool).WithRunner(&mockGitRunner{})
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(&mockGitRunner{})
 	if err := r.FetchProject(context.TODO(), "group/proj"); err == nil {
 		t.Fatal("expected error when the lookup query fails")
 	}

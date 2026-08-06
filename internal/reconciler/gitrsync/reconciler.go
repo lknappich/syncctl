@@ -59,16 +59,26 @@ func (r *Reconciler) Name() string { return name }
 // write into git-owned directories.
 func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	start := time.Now()
+	ep, err := sshexec.ParseEndpoint(r.sshHost)
+	if err != nil {
+		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		return reconciler.Result{OK: false, Detail: err.Error(), Remaining: 1}
+	}
+	sshCmd, err := r.sshCfg.SSHString(r.sshHost)
+	if err != nil {
+		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		return reconciler.Result{OK: false, Detail: err.Error(), Remaining: 1}
+	}
 	args := []string{
 		"-az", "--delete", "--checksum",
-		"-e", r.sshCfg.SSHString(),
+		"-e", sshCmd,
 		"--rsync-path", "sudo rsync",
 	}
 	if r.dryRun {
 		args = append(args, "--dry-run")
 	}
 	args = append(args,
-		fmt.Sprintf("%s:%s/", r.sshHost, r.srcPath),
+		fmt.Sprintf("%s:%s/", ep.Destination(), r.srcPath),
 		r.dstPath+"/",
 	)
 
