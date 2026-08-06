@@ -206,14 +206,21 @@ func extractProjectPath(body []byte) (string, error) {
 // push burst.
 type TriggerManager struct {
 	mu      sync.Mutex
-	pending map[string]context.CancelFunc
+	pending map[string]*pendingTrigger
 	trigger TriggerFunc
+}
+
+// pendingTrigger identifies one in-flight invocation. Identity matters:
+// the cleanup must remove only its own entry, never a newer one that
+// replaced it.
+type pendingTrigger struct {
+	cancel context.CancelFunc
 }
 
 // NewTriggerManager wraps a TriggerFunc with per-project debouncing.
 func NewTriggerManager(trigger TriggerFunc) *TriggerManager {
 	return &TriggerManager{
-		pending: map[string]context.CancelFunc{},
+		pending: map[string]*pendingTrigger{},
 		trigger: trigger,
 	}
 }
@@ -221,12 +228,14 @@ func NewTriggerManager(trigger TriggerFunc) *TriggerManager {
 // Trigger debounces: if a sync for this project is already pending,
 // cancels it and starts a new one after a short delay.
 func (m *TriggerManager) Trigger(ctx context.Context, projectPath, eventType string) error {
-	m.mu.Lock()
-	if cancel, ok := m.pending[projectPath]; ok {
-		cancel()
-	}
 	ctx2, cancel := context.WithCancel(ctx)
-	m.pending[projectPath] = cancel
+	self := &pendingTrigger{cancel: cancel}
+
+	m.mu.Lock()
+	if prev, ok := m.pending[projectPath]; ok {
+		prev.cancel()
+	}
+	m.pending[projectPath] = self
 	m.mu.Unlock()
 
 	// The stored cancel lets a later trigger pre-empt this one; this
@@ -237,7 +246,13 @@ func (m *TriggerManager) Trigger(ctx context.Context, projectPath, eventType str
 
 	defer func() {
 		m.mu.Lock()
-		delete(m.pending, projectPath)
+		// A newer trigger may already own the slot. Deleting
+		// unconditionally dropped its cancel func, so the webhook after
+		// that one found nothing to pre-empt and ran concurrently with
+		// the in-flight fetch — the exact thing debouncing prevents.
+		if m.pending[projectPath] == self {
+			delete(m.pending, projectPath)
+		}
 		m.mu.Unlock()
 	}()
 

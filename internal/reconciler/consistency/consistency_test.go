@@ -3,8 +3,10 @@ package consistency
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -233,5 +235,41 @@ func TestGitFsckFails(t *testing.T) {
 	defer func() { execCmd = orig }()
 	if gitFsck(context.Background(), "/repo") {
 		t.Error("gitFsck should return false on error")
+	}
+}
+
+// Sampling with rng.Intn per iteration draws with replacement, so the
+// same repo is fsck'd more than once and effective coverage falls below
+// consistency_sample_pct. Every sampled repo must be distinct.
+func TestSampleGitFsckDrawsWithoutReplacement(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 20; i++ {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("repo%02d.git", i)), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var mu sync.Mutex
+	seen := map[string]int{}
+	orig := execCmd
+	execCmd = func(_ context.Context, _ string, args ...string) cmdRunner {
+		mu.Lock()
+		// args are: -C <path> fsck --no-dangling
+		seen[args[1]]++
+		mu.Unlock()
+		return &fakeCmd{}
+	}
+	t.Cleanup(func() { execCmd = orig })
+
+	r := &Reconciler{reposPath: root, samplePct: 0.5}
+	r.sampleGitFsck(context.Background())
+
+	if len(seen) != 10 {
+		t.Errorf("fsck'd %d distinct repos, want 10 (50%% of 20)", len(seen))
+	}
+	for repo, n := range seen {
+		if n != 1 {
+			t.Errorf("repo %s sampled %d times; sampling must be without replacement", repo, n)
+		}
 	}
 }

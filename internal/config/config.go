@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
 
@@ -678,12 +677,6 @@ func (c *Config) warnInsecureSSL(_ *[]error) {
 	for i, s := range c.Secondaries {
 		check(fmt.Sprintf("secondaries[%d]:%s", i, s.Name), s.Postgres)
 	}
-}
-
-// InstanceID returns a stable per-process identifier for log/metrics
-// disambiguation; regenerated each process start.
-func (c *Config) InstanceID() string {
-	return uuid.NewString()
 }
 
 // SSHExecConfig returns the sshexec.Config derived from the SSH config block.

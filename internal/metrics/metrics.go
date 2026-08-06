@@ -3,6 +3,8 @@ package metrics
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -54,15 +56,29 @@ var (
 	)
 )
 
-// Register registers all collectors on the provided registerer (idempotent
-// at process level; tests should use a fresh registry).
-func Register(reg prometheus.Registerer) {
-	reg.MustRegister(
+// Register registers all collectors on the provided registerer.
+//
+// Duplicate registration of the same collector is not an error worth
+// killing the process over — MustRegister panics, so a second call (say,
+// a command that both registers and delegates to one that does) took the
+// whole binary down. Already-registered is treated as success; anything
+// else is returned.
+func Register(reg prometheus.Registerer) error {
+	for _, c := range []prometheus.Collector{
 		PGReplayLagSeconds,
 		SyncDurationSeconds,
 		DriftTotal,
 		LastSyncTimestamp,
-	)
+	} {
+		if err := reg.Register(c); err != nil {
+			var already prometheus.AlreadyRegisteredError
+			if errors.As(err, &already) {
+				continue
+			}
+			return fmt.Errorf("register collector: %w", err)
+		}
+	}
+	return nil
 }
 
 // Server serves the /metrics endpoint. Callers should Start() it and

@@ -451,18 +451,6 @@ func TestExpandEnvNoRefs(t *testing.T) {
 	}
 }
 
-func TestInstanceIDIsUnique(t *testing.T) {
-	c := &Config{}
-	a := c.InstanceID()
-	b := c.InstanceID()
-	if a == "" || b == "" {
-		t.Fatal("InstanceID should not be empty")
-	}
-	if a == b {
-		t.Fatal("InstanceID should be unique per call")
-	}
-}
-
 func TestSSHExecConfig(t *testing.T) {
 	c := &Config{SSH: SSHConfig{KnownHostsFile: "/etc/ssh/known_hosts", StrictHostKeyChecking: "yes"}}
 	got := c.SSHExecConfig()

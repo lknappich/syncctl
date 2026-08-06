@@ -326,3 +326,13 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return sb.String()
 }
+func TestCheckDataDirRejectsUninspectableDir(t *testing.T) {
+	parent := t.TempDir()
+	target := filepath.Join(parent, "pgdata")
+	if err := os.WriteFile(target, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDataDir(target); err == nil {
+		t.Fatal("expected an error for a path that is not a directory")
+	}
+}

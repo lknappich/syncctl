@@ -5,7 +5,9 @@ package pgsetup
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,10 +110,21 @@ func Run(ctx context.Context, opts Options) error {
 // an existing data directory.
 func checkDataDir(dir string) error {
 	entries, err := os.ReadDir(dir)
-	if err == nil && len(entries) > 0 {
-		return fmt.Errorf("data_dir %s is not empty (refusing to overwrite)", dir)
+	switch {
+	case err == nil:
+		if len(entries) > 0 {
+			return fmt.Errorf("data_dir %s is not empty (refusing to overwrite)", dir)
+		}
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		// pg_basebackup creates it.
+		return nil
+	default:
+		// Permission denied, or a path that exists as a file. Treating
+		// these as "empty" let pg_basebackup run against a directory we
+		// could not actually inspect.
+		return fmt.Errorf("inspect data_dir %s: %w", dir, err)
 	}
-	return nil
 }
 
 // appendConnInfoAppname appends/updates the primary_conninfo line in
