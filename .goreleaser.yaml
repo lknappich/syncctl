@@ -38,7 +38,9 @@ dockers_v2:
       - ghcr.io/lknappich/syncctl
     tags:
       - "{{ .Version }}"
-      - latest
+      # A prerelease must not claim :latest — anyone pulling it would get
+      # a release candidate. goreleaser drops the empty tag.
+      - '{{ if not .Prerelease }}latest{{ end }}'
     labels:
       org.opencontainers.image.description: "Independent orchestrator that mirrors a self-hosted GitLab to one or more replicas using standard tooling."
       org.opencontainers.image.created: "{{.Date}}"
