@@ -20,6 +20,9 @@ var Default Runner = realRunner{}
 type realRunner struct{}
 
 func (realRunner) Run(ctx context.Context, name string, args []string, env []string) ([]byte, error) {
+	// #nosec G204 -- args are passed as an argv vector, never through a
+	// shell, so no quoting or metacharacter handling applies. Values that
+	// end up in a *remote* shell go through internal/shellquote instead.
 	cmd := exec.CommandContext(ctx, name, args...)
 	if len(env) > 0 {
 		cmd.Env = append(cmd.Environ(), env...)

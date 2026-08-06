@@ -37,6 +37,8 @@ type Options struct {
 var runBasebackup = defaultBasebackupFactory
 
 func defaultBasebackupFactory(ctx context.Context, opts Options) basebackupRunner {
+	// #nosec G204 -- argv vector, not a shell string; the binary name is
+	// fixed and the arguments come from validated config.
 	cmd := exec.CommandContext(ctx, "pg_basebackup",
 		buildBasebackupArgs(opts)...)
 	cmd.Stdout = os.Stdout
@@ -121,6 +123,8 @@ func appendConnInfoAppname(dataDir, appName string) error {
 		return nil
 	}
 	path := filepath.Join(dataDir, "postgresql.auto.conf")
+	// #nosec G304 -- the file pg_basebackup just wrote into the PGDATA
+	// the operator named with --data-dir.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read postgresql.auto.conf: %w", err)
@@ -143,6 +147,7 @@ func appendConnInfoAppname(dataDir, appName string) error {
 	if !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
+	// #nosec G703 -- same operator-supplied PGDATA path as the read above.
 	return os.WriteFile(path, []byte(out), 0o600)
 }
 

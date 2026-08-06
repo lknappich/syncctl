@@ -208,6 +208,12 @@ func (m *TriggerManager) Trigger(ctx context.Context, projectPath, eventType str
 	m.pending[projectPath] = cancel
 	m.mu.Unlock()
 
+	// The stored cancel lets a later trigger pre-empt this one; this
+	// deferred call releases the context when the trigger finishes.
+	// Without it the context lives until the parent is cancelled, so a
+	// project that receives exactly one webhook leaks one until shutdown.
+	defer cancel()
+
 	defer func() {
 		m.mu.Lock()
 		delete(m.pending, projectPath)

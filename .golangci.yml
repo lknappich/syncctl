@@ -41,32 +41,14 @@ linters:
         - -ST1022
   exclusions:
     rules:
+      # Test code exercises the same risky constructs deliberately.
+      # Production code takes its exemptions inline via #nosec, so each
+      # one is reviewable in the diff where it lives.
       - path: _test\.go
         linters:
           - gosec
           - errcheck
           - revive
-      - linters:
-          - gosec
-        text: "G204:"
-      - linters:
-          - gosec
-        text: "G304:"
-      - linters:
-          - gosec
-        text: "G703:"
-      - linters:
-          - gosec
-        text: "G401:"
-      - linters:
-          - gosec
-        text: "G505:"
-      - linters:
-          - gosec
-        text: "G404:"
-      - linters:
-          - gosec
-        text: "G118:"
 
 formatters:
   enable:

@@ -654,6 +654,8 @@ func newInitCmd() *cobra.Command {
 			if outputPath == "" {
 				outputPath = "config.yaml"
 			}
+			// #nosec G304 -- writing the generated config to the path the
+			// operator gave with -o is the command's purpose.
 			f, err := os.Create(outputPath)
 			if err != nil {
 				return fmt.Errorf("create %s: %w", outputPath, err)

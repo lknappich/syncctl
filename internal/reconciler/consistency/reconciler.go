@@ -169,6 +169,8 @@ func (r *Reconciler) sampleGitFsck(ctx context.Context) int {
 	if n < 1 {
 		n = 1
 	}
+	// #nosec G404 -- picks which repos to spot-check for corruption on a
+	// replica we own. Nothing authenticates or authorizes on this value.
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	failed := 0
 	for i := 0; i < n; i++ {
@@ -214,5 +216,7 @@ type cmdRunner interface {
 }
 
 func newExecCmd(ctx context.Context, name string, args ...string) cmdRunner {
+	// #nosec G204 -- argv vector, not a shell string; the only caller
+	// passes a fixed `git fsck` invocation plus a repo path.
 	return exec.CommandContext(ctx, name, args...)
 }
