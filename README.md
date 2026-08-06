@@ -16,7 +16,7 @@ clean-room, independent implementation licensed under Apache-2.0.
 | PostgreSQL streaming | ✅ | Physical WAL streaming via `pg_basebackup` + `pg_stat_replication` lag monitoring |
 | Git data (rsync) | ✅ | `rsync --delete --checksum` of the repositories tree |
 | Git data (fetch) | ✅ | Per-project `git fetch --prune +refs/*:refs/*` with bounded-parallel workers |
-| Object storage (S3) | ✅ | Cross-region replication verification (count + size parity) |
+| Object storage (S3) | ✅ | Cross-region replication verification (count + size parity; lists both buckets in full each sweep — raise `sweep_interval` for large buckets) |
 | Object storage (FS) | ✅ | `rsync` of uploads/artifacts/LFS/packages/registry dirs |
 | Registry | ✅ | Docker Registry v2 API catalog/tag diff (skips on 401) |
 | Consistency sweep | ✅ | Row-count comparison + `git fsck` sampling with tolerance band |
@@ -36,8 +36,12 @@ clean-room, independent implementation licensed under Apache-2.0.
 - **Sidekiq** is not replicated. In-flight jobs at the moment of primary
   failure are the only accepted RPO loss. Sidekiq is paused on the
   secondary while in read-only mode.
-- **Auto-repair** for S3 objects is deferred to Phase 2 (cloud provider
-  replication is the primary path; our tool verifies parity).
+- **Auto-repair** is deferred to Phase 2. Nothing repairs drift today —
+  the reconcilers observe and report it. Cloud provider replication is
+  the primary path for S3; syncctl verifies parity.
+- **No persistent state.** Sweep history, drift state, and failover
+  records live in memory and are lost on restart. Use the metrics
+  endpoint for anything you need to retain.
 - **DNS failover** plugins (route53, cloudflare) are stubbed; manual DNS
   is the default.
 

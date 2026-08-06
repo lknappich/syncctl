@@ -154,7 +154,6 @@ func newConfigValidateCmd(g *globalFlags) *cobra.Command {
 					cfg.Failover.AutoFailover, cfg.Failover.QuorumRequired, cfg.Failover.DNSPlugin)
 			}
 			fmt.Printf("metrics addr: %s\n", cfg.Metrics.Addr)
-			fmt.Printf("control db: %s\n", cfg.ControlDB)
 			return nil
 		},
 	}
