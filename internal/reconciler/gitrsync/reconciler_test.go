@@ -57,7 +57,7 @@ func TestNewConstructorFields(t *testing.T) {
 		Git: config.GitStorage{ReposPath: "/var/opt/gitlab/git-data/repositories"},
 	}
 	sshCfg := sshexec.Config{KnownHostsFile: "/etc/known_hosts", StrictHostKeyChecking: "yes"}
-	r := New(primary, secondary, true, sshCfg)
+	r := New(primary, secondary, "", true, sshCfg)
 	if r.sshHost != "primary.example.com:22" {
 		t.Errorf("sshHost = %q", r.sshHost)
 	}
@@ -78,7 +78,7 @@ func TestNewConstructorFields(t *testing.T) {
 func TestNewEmptyPaths(t *testing.T) {
 	primary := &config.SiteConfig{SSHHost: "host:22"}
 	secondary := &config.SiteConfig{}
-	r := New(primary, secondary, false, sshexec.Config{})
+	r := New(primary, secondary, "", false, sshexec.Config{})
 	if r.sshHost != "host:22" {
 		t.Errorf("sshHost = %q", r.sshHost)
 	}
@@ -116,7 +116,7 @@ func TestErrResultError(t *testing.T) {
 
 func TestReconcileSuccess(t *testing.T) {
 	r := New(&config.SiteConfig{SSHHost: "p:22", Git: config.GitStorage{ReposPath: "/src"}},
-		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, false, sshexec.Config{})
+		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, "", false, sshexec.Config{})
 	r = r.WithRunner(&mockRunner{out: []byte("")})
 	res := r.Reconcile(context.Background())
 	if !res.OK {
@@ -125,8 +125,7 @@ func TestReconcileSuccess(t *testing.T) {
 }
 
 func TestReconcileDryRun(t *testing.T) {
-	r := New(&config.SiteConfig{SSHHost: "p:22", Git: config.GitStorage{ReposPath: "/src"}},
-		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, true, sshexec.Config{})
+	r := New(&config.SiteConfig{SSHHost: "p:22", Git: config.GitStorage{ReposPath: "/src"}}, &config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, "", true, sshexec.Config{})
 	r = r.WithRunner(&mockRunner{out: []byte("")})
 	res := r.Reconcile(context.Background())
 	if !res.OK {
@@ -139,7 +138,7 @@ func TestReconcileDryRun(t *testing.T) {
 
 func TestReconcileRsyncError(t *testing.T) {
 	r := New(&config.SiteConfig{SSHHost: "p:22", Git: config.GitStorage{ReposPath: "/src"}},
-		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, false, sshexec.Config{})
+		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, "", false, sshexec.Config{})
 	r = r.WithRunner(&mockRunner{err: errors.New("rsync failed"), out: []byte("permission denied")})
 	res := r.Reconcile(context.Background())
 	if res.OK {
@@ -153,7 +152,7 @@ func TestReconcileRsyncError(t *testing.T) {
 func TestReconcileBuildsCorrectArgs(t *testing.T) {
 	runner := &mockRunner{out: []byte("")}
 	r := New(&config.SiteConfig{SSHHost: "p:22", Git: config.GitStorage{ReposPath: "/src"}},
-		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, false, sshexec.Config{})
+		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, "", false, sshexec.Config{})
 	r = r.WithRunner(runner)
 	_ = r.Reconcile(context.Background())
 	if len(runner.calls) != 1 {
@@ -184,7 +183,7 @@ func TestReconcileBuildsCorrectArgs(t *testing.T) {
 func TestReconcileRejectsMalformedSSHHost(t *testing.T) {
 	runner := &mockRunner{}
 	r := New(&config.SiteConfig{SSHHost: "p:not-a-port", Git: config.GitStorage{ReposPath: "/src"}},
-		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, false, sshexec.Config{})
+		&config.SiteConfig{Git: config.GitStorage{ReposPath: "/dst"}}, "", false, sshexec.Config{})
 	r = r.WithRunner(runner)
 	res := r.Reconcile(context.Background())
 	if res.OK {
@@ -195,11 +194,18 @@ func TestReconcileRejectsMalformedSSHHost(t *testing.T) {
 	}
 }
 
-func TestNameIsQualifiedBySecondary(t *testing.T) {
-	r := New(&config.SiteConfig{SSHHost: "p"},
-		&config.SiteConfig{Name: "secondary-us"}, false, sshexec.Config{})
-	if got := r.Name(); got != "git_rsync@secondary-us" {
-		t.Errorf("Name() = %q, want git_rsync@secondary-us — metrics and logs must "+
-			"distinguish one secondary from another", got)
+// The site suffix appears only when the caller supplies one, which
+// main does solely for multi-secondary deployments — single-secondary
+// metric labels stay exactly as they were.
+func TestNameIsQualifiedOnlyWhenSiteGiven(t *testing.T) {
+	bare := New(&config.SiteConfig{SSHHost: "p"},
+		&config.SiteConfig{Name: "secondary-us"}, "", false, sshexec.Config{})
+	if got := bare.Name(); got != "git_rsync" {
+		t.Errorf("Name() = %q, want git_rsync — existing dashboards must keep matching", got)
+	}
+	qualified := New(&config.SiteConfig{SSHHost: "p"},
+		&config.SiteConfig{Name: "secondary-us"}, "secondary-us", false, sshexec.Config{})
+	if got := qualified.Name(); got != "git_rsync@secondary-us" {
+		t.Errorf("Name() = %q, want git_rsync@secondary-us", got)
 	}
 }

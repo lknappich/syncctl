@@ -548,7 +548,7 @@ func TestCheckSecretsRejectsLiterals(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkSecretsAreEnvRefs(tc.cfg)
+			err := CheckSecretsAreEnvRefs(tc.cfg)
 			if err == nil {
 				t.Fatal("expected a literal-secret error")
 			}
@@ -567,7 +567,7 @@ func TestCheckSecretsAcceptsEnvRefsAndEmpty(t *testing.T) {
 			S3: &S3Config{AccessKey: "${S3_AK}", SecretKey: "${S3_SK}"}}}},
 		Webhook: &WebhookConfig{SecretToken: "${WEBHOOK_SECRET_TOKEN}"},
 	}
-	if err := checkSecretsAreEnvRefs(cfg); err != nil {
+	if err := CheckSecretsAreEnvRefs(cfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -575,7 +575,7 @@ func TestCheckSecretsAcceptsEnvRefsAndEmpty(t *testing.T) {
 func TestCheckSecretsReportsEveryViolation(t *testing.T) {
 	cfg := &Config{Primary: SiteConfig{Postgres: PostgresConfig{
 		Password: "a", ReplicationPassword: "b"}}}
-	err := checkSecretsAreEnvRefs(cfg)
+	err := CheckSecretsAreEnvRefs(cfg)
 	if err == nil {
 		t.Fatal("expected errors")
 	}
@@ -586,7 +586,7 @@ func TestCheckSecretsReportsEveryViolation(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsLiteralSecret(t *testing.T) {
+func TestLoadWarnsButAcceptsLiteralSecret(t *testing.T) {
 	yaml := `
 primary:
   name: p
@@ -608,12 +608,19 @@ secondaries:
 `
 	t.Setenv("PG_REPL_PASSWORD", "x")
 	t.Setenv("SEC_REPL_PASSWORD", "y")
-	_, err := Load(writeTempConfig(t, yaml))
-	if err == nil {
-		t.Fatal("expected Load to reject a literal secret")
+	// A literal secret is a warning, not a load failure: refusing to
+	// start would break a running deployment on upgrade, and for a
+	// disaster-recovery tool an unstartable binary is its own incident.
+	cfg, err := Load(writeTempConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load should still succeed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "primary.postgres.password") {
-		t.Errorf("error should name the offending field, got: %v", err)
+	if cfg.Primary.Postgres.Password != "plaintext-password" {
+		t.Errorf("password = %q", cfg.Primary.Postgres.Password)
+	}
+	// The enforcing variant still reports it, for callers that want to gate.
+	if err := CheckSecretsAreEnvRefs(cfg); err == nil {
+		t.Error("CheckSecretsAreEnvRefs should still report the literal")
 	}
 }
 func TestValidatePaths(t *testing.T) {
@@ -761,10 +768,12 @@ func TestValidateWebhookTLS(t *testing.T) {
 	}
 }
 
-func TestMetricsAddrDefaultsToLoopback(t *testing.T) {
+// The default stays :9101. Changing it to loopback would silently stop
+// existing scrapers on upgrade; warnMetricsExposed says what it costs.
+func TestMetricsAddrDefaultIsUnchanged(t *testing.T) {
 	c := &Config{}
 	_ = c.validate()
-	if c.Metrics.Addr != "127.0.0.1:9101" {
-		t.Errorf("metrics.addr = %q, want 127.0.0.1:9101 — /metrics has no auth", c.Metrics.Addr)
+	if c.Metrics.Addr != ":9101" {
+		t.Errorf("metrics.addr = %q, want :9101", c.Metrics.Addr)
 	}
 }

@@ -31,9 +31,9 @@ type Reconciler struct {
 }
 
 // New creates a git rsync reconciler from a primary/secondary config pair.
-func New(primary, secondary *config.SiteConfig, dryRun bool, sshCfg sshexec.Config) *Reconciler {
+func New(primary, secondary *config.SiteConfig, site string, dryRun bool, sshCfg sshexec.Config) *Reconciler {
 	return &Reconciler{
-		site:    secondary.Name,
+		site:    site,
 		sshHost: primary.SSHHost,
 		srcPath: primary.Git.ReposPath,
 		dstPath: secondary.Git.ReposPath,
