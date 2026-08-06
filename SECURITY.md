@@ -199,8 +199,16 @@ sha256sum -c syncctl_1.0.0_checksums.txt --ignore-missing
 
 An SBOM is published with each archive.
 
-Container images are not yet attested — see the tracking issue for
-signing `ghcr.io/lknappich/syncctl`.
+Container images carry the same provenance, attested by digest and stored
+alongside the image in the registry:
+
+```sh
+gh attestation verify oci://ghcr.io/lknappich/syncctl:1.0.0 --owner lknappich
+```
+
+The attestation is bound to the image digest rather than its tag, so it
+stays valid for the exact bytes that were published even if a tag is
+later repointed.
 
 ## Data protection
 
