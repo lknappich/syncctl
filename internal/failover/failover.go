@@ -14,6 +14,7 @@ import (
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/dbkey"
 	"github.com/lknappich/syncctl/internal/readonly"
+	"github.com/lknappich/syncctl/internal/shellquote"
 	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
@@ -228,7 +229,8 @@ func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH string)
 			return c.sshSecondary(ctx, oldPrimarySSH,
 				fmt.Sprintf("sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_basebackup "+
 					"-h %s -U %s -D /var/opt/gitlab/postgresql/data -X stream -c fast -R -P",
-					newPrimary.Postgres.Host, newPrimary.Postgres.ReplicationUser))
+					shellquote.Quote(newPrimary.Postgres.Host),
+					shellquote.Quote(newPrimary.Postgres.ReplicationUser)))
 		}},
 		{"enable read-only mode on old primary", func(ctx context.Context) error {
 			return readonly.EnableWithConfig(ctx, oldPrimarySSH, c.dryRun, c.sshCfg)

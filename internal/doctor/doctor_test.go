@@ -630,3 +630,16 @@ func TestRunWithMinimalConfig(t *testing.T) {
 
 // silence unused imports if sshexec ever gets removed
 var _ sshexec.Runner = (*mockRunner)(nil)
+
+func TestPathExistsCheckQuotesThePath(t *testing.T) {
+	runner := &mockRunner{out: []byte("")}
+	pathExistsCheck(context.Background(), "secondary", "h", "/mnt/git data; rm -rf /", "repos_path", runner)
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(runner.calls))
+	}
+	got := runner.calls[0].cmd
+	want := `test -d '/mnt/git data; rm -rf /'`
+	if got != want {
+		t.Errorf("remote command = %q, want %q", got, want)
+	}
+}

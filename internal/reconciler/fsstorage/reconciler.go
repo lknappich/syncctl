@@ -131,6 +131,10 @@ func (r *Reconciler) rsyncPath(ctx context.Context, pair PathPair) error {
 	}
 	args := []string{
 		"-az", "--delete", "--checksum",
+		// -s stops the remote shell from expanding the path, so an
+		// fs_paths entry
+		// containing spaces or glob characters is taken literally.
+		"-s",
 		"-e", sshCmd,
 		"--rsync-path", "sudo rsync",
 	}

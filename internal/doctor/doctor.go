@@ -15,6 +15,7 @@ import (
 
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/dbkey"
+	"github.com/lknappich/syncctl/internal/shellquote"
 	"github.com/lknappich/syncctl/internal/sshexec"
 )
 
@@ -360,7 +361,7 @@ func pathExistsCheck(ctx context.Context, label, sshHost, path, pathName string,
 		return Check{Name: "path:" + label + ":" + pathName, Category: "filesystem",
 			Status: "WARN", Detail: "ssh_host not configured"}
 	}
-	_, err := runner.CombinedOutput(ctx, sshHost, "test -d "+path)
+	_, err := runner.CombinedOutput(ctx, sshHost, "test -d "+shellquote.Quote(path))
 	if err != nil {
 		return Check{Name: "path:" + label + ":" + pathName, Category: "filesystem",
 			Status: "WARN", Detail: fmt.Sprintf("%s does not exist yet (will be created on first sync)", path)}
