@@ -10,6 +10,14 @@ than one you discover afterwards.
 [`SECURITY.md`](SECURITY.md) covers how the mechanism is secured. This
 covers the data it moves.
 
+> **This is not legal advice.** It is a description of what the software
+> does with data, written by the people who wrote the software, so that
+> you can take it to someone qualified. Where it names a regulation it is
+> pointing at a question you should ask, not answering it. Data
+> protection law varies by jurisdiction, by the categories of data you
+> hold, and by your role as controller or processor — none of which this
+> document knows. Get your own advice before relying on any of it.
+
 ## What replication copies
 
 PostgreSQL replication here is **physical**: WAL streaming copies every
@@ -52,19 +60,22 @@ security posture, not a backup.
 **Configuring a primary and a secondary in different countries moves
 personal data between those countries.** In several jurisdictions that is
 a regulated act in its own right, independent of how well the transfer is
-encrypted.
+encrypted. Whether it is regulated in yours, and on what terms, is a
+question for your own advisers — the point here is that the software does
+it, silently, as soon as the config says so.
 
 The shipped [`deploy/config.example.yaml`](deploy/config.example.yaml)
 pairs `eu-west-1` with `us-east-1`. That is an illustration of the
-configuration format, **not a recommendation**. Copying it moves
-EU-resident personal data to the United States, which under GDPR
-Chapter V requires a lawful transfer mechanism — an adequacy decision,
-standard contractual clauses, or another Article 46 safeguard.
+configuration format, **not a recommendation**. Copied literally it moves EU-resident personal data to the United States.
+Our understanding is that this engages GDPR Chapter V and needs a lawful
+transfer mechanism — an adequacy decision, standard contractual clauses,
+or another Article 46 safeguard — but confirm that against your own
+circumstances rather than against this file.
 
 Before deploying across a border:
 
-- Confirm you have a lawful basis for the transfer, not merely a secure
-  channel for it.
+- Confirm with your own advisers that you have a lawful basis for the
+  transfer, not merely a secure channel for it.
 - Check any data-residency commitment you have made to customers or
   regulators. A replica in another region can breach a residency promise
   even if nobody ever reads from it.
@@ -90,7 +101,9 @@ Deletions propagate, but not instantly and not uniformly:
 
 When responding to an erasure request, treat the request as complete only
 after a sweep has run and reported the component in sync. Nothing in
-`syncctl` acknowledges an erasure as finished on your behalf.
+`syncctl` acknowledges an erasure as finished on your behalf, and nothing
+here should be read as defining what "complete" means for your
+obligations.
 
 ## What syncctl itself retains
 
