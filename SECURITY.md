@@ -203,12 +203,17 @@ Container images carry the same provenance, attested by digest and stored
 alongside the image in the registry:
 
 ```sh
-gh attestation verify oci://ghcr.io/lknappich/syncctl:1.0.0 --owner lknappich
+gh attestation verify oci://ghcr.io/lknappich/syncctl:<version> --owner lknappich
 ```
 
 The attestation is bound to the image digest rather than its tag, so it
 stays valid for the exact bytes that were published even if a tag is
 later repointed.
+
+Image attestation was added after 1.0.0, so the `1.0.0` image itself is
+not attested and the command above will report a 404 for it. Release
+archives are attested from 1.0.0 onward; images from the first release
+after it.
 
 ## Data protection
 
