@@ -303,8 +303,7 @@ func dbKeyPresentCheck(ctx context.Context, label, sshHost string, runner sshexe
 		return Check{Name: "dbkey:" + label, Category: "dbkey",
 			Status: "WARN", Detail: "ssh_host not configured"}
 	}
-	remoteCmd := "sudo grep -c 'db_key_base' /var/opt/gitlab/gitlab-rails/etc/secrets.yml 2>/dev/null || grep -c 'db_key_base' /var/opt/gitlab/gitlab-rails/etc/secrets.yml 2>/dev/null || echo 0"
-	out, err := runner.CombinedOutput(ctx, sshHost, remoteCmd)
+	out, err := runner.CombinedOutput(ctx, sshHost, dbKeyPresentCmd)
 	if err != nil {
 		return Check{Name: "dbkey:" + label, Category: "dbkey",
 			Status: "FAIL", Detail: fmt.Sprintf("ssh: %v", err)}
@@ -317,8 +316,24 @@ func dbKeyPresentCheck(ctx context.Context, label, sshHost string, runner sshexe
 			Status: "FAIL", Detail: "db_key_base not found in secrets.yml or gitlab.rb"}
 	}
 	return Check{Name: "dbkey:" + label, Category: "dbkey",
-		Status: "PASS", Detail: "present in secrets.yml"}
+		Status: "PASS", Detail: "present in secrets.yml or gitlab.rb"}
 }
+
+// dbKeyPresentCmd counts db_key_base occurrences, trying the Omnibus
+// generated secrets.yml first and falling back to an explicit setting in
+// gitlab.rb.
+//
+// The gitlab.rb branch used to be missing: both alternatives read
+// secrets.yml, the second being the first without sudo. The failure
+// message named gitlab.rb anyway, so an operator who sets db_key_base
+// there was told syncctl had checked a file it never opened. This
+// mirrors the fallback dbkey.tryFetchKey already performs, so `doctor`
+// and the `dbkey` command it pre-flights now agree on where the key can
+// live.
+const dbKeyPresentCmd = "sudo grep -c 'db_key_base' /var/opt/gitlab/gitlab-rails/etc/secrets.yml 2>/dev/null || " +
+	"grep -c 'db_key_base' /var/opt/gitlab/gitlab-rails/etc/secrets.yml 2>/dev/null || " +
+	"sudo grep -c \"gitlab_rails\\['db_key_base'\\]\" /etc/gitlab/gitlab.rb 2>/dev/null || " +
+	"grep -c \"gitlab_rails\\['db_key_base'\\]\" /etc/gitlab/gitlab.rb 2>/dev/null || echo 0"
 
 func dbKeyParityCheck(ctx context.Context, primarySSH, secondarySSH, secondaryName string, runner sshexec.Runner) Check {
 	err := dbkey.CheckWithRunner(ctx, primarySSH, secondarySSH, runner)
