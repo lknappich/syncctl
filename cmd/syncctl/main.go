@@ -544,6 +544,7 @@ func newFailoverCmd(g *globalFlags) *cobra.Command {
 
 func newAdoptCmd(g *globalFlags) *cobra.Command {
 	var oldPrimarySSH string
+	var wipePGData bool
 	cmd := &cobra.Command{
 		Use:           "adopt-as-secondary",
 		Short:         "Convert the old primary into a secondary of the new primary (role-swap)",
@@ -566,10 +567,13 @@ func newAdoptCmd(g *globalFlags) *cobra.Command {
 			ctx, cancel := context.WithTimeout(sigCtx, 30*time.Minute)
 			defer cancel()
 			fc := failover.New(cfg, g.dryRun)
+			fc.SetWipePGData(wipePGData)
 			return fc.AdoptAsSecondary(ctx, oldPrimarySSH)
 		},
 	}
 	cmd.Flags().StringVar(&oldPrimarySSH, "old-primary-ssh", "", "SSH host:port of the old primary")
+	cmd.Flags().BoolVar(&wipePGData, "wipe-pgdata", false,
+		"delete the old primary's PostgreSQL data directory before re-basing (destructive)")
 	return cmd
 }
 

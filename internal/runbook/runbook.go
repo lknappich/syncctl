@@ -50,7 +50,11 @@ after 3 consecutive health check failures ({{.Primary.ExternalURL}}).
 
 ### Manual
 
-    syncctl failover --secondary {{firstSecondaryName .}}
+    syncctl failover --secondary {{firstSecondaryName .}} --yes
+
+Rehearse it first with --dry-run in place of --yes. If the primary is
+still answering health checks and you are promoting deliberately, add
+--force — that is the split-brain case, so be sure.
 
 ### Post-failover checklist
 
@@ -68,6 +72,10 @@ When the old primary comes back online:
 
 This runs pg_basebackup from the new primary and reconfigures the old
 primary as a read-only secondary.
+
+The old primary's PGDATA still holds its own cluster, and pg_basebackup
+will not write into a populated directory. Back that cluster up, then
+re-run with ` + "`--wipe-pgdata`" + ` to replace it.
 
 ## 3. Split-Brain Recovery
 

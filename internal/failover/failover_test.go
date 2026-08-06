@@ -423,3 +423,53 @@ func TestCheckSetsPrimaryDownAfter3Fails(t *testing.T) {
 		t.Error("primary should be down after 3 consecutive fails")
 	}
 }
+
+// Parity must be checked before anything destructive runs. Checked after
+// pg_ctl promote it necessarily SSHes to the primary we just declared
+// dead, so a successful promotion reported as a failure.
+func TestPromoteChecksParityBeforePromotingPostgres(t *testing.T) {
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com"},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
+	}
+	fc := New(cfg, true)
+	secondary, err := fc.findSecondary("s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, step := range fc.promotionSteps(secondary) {
+		order = append(order, step.name)
+	}
+	parity, promote := indexOf(order, "verify db_key_base parity"), indexOf(order, "promote postgres")
+	if parity < 0 || promote < 0 {
+		t.Fatalf("missing steps in %v", order)
+	}
+	if parity > promote {
+		t.Errorf("parity check runs after promotion (%v); it must be a precondition", order)
+	}
+}
+
+func TestAdoptAsSecondaryRequiresASecondary(t *testing.T) {
+	cfg := &config.Config{
+		Primary: config.SiteConfig{Name: "p"},
+		Sync:    config.SyncConfig{FailoverEnabled: true},
+	}
+	fc := New(cfg, false)
+	err := fc.AdoptAsSecondary(context.Background(), "old:22")
+	if err == nil {
+		t.Fatal("expected an error rather than an index-out-of-range panic")
+	}
+	if !strings.Contains(err.Error(), "no secondaries configured") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func indexOf(ss []string, want string) int {
+	for i, s := range ss {
+		if s == want {
+			return i
+		}
+	}
+	return -1
+}
