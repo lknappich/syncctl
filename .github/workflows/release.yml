@@ -61,3 +61,30 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*_checksums.txt
+
+      # The image is attested by digest rather than tag: a tag can be
+      # repointed later, a digest cannot, so the attestation stays bound
+      # to the exact bytes goreleaser pushed.
+      - name: Resolve the pushed image digest
+        id: image
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Must match dockers_v2.images in .goreleaser.yaml.
+          image="ghcr.io/lknappich/syncctl"
+          digest=$(docker buildx imagetools inspect "${image}:${TAG#v}" \
+            --format '{{.Manifest.Digest}}')
+          echo "Resolved ${image}:${TAG#v} -> ${digest}"
+          echo "name=${image}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest container image provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          # Stores the attestation alongside the image in GHCR, so
+          # `gh attestation verify oci://...` works for anyone who can
+          # pull it, without needing the GitHub API.
+          push-to-registry: true
