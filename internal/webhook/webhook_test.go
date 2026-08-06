@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -264,5 +265,51 @@ func TestWithTLSRecordsCertAndKey(t *testing.T) {
 	s = s.WithTLS("/c.pem", "/k.pem")
 	if s.tlsCert != "/c.pem" || s.tlsKey != "/k.pem" {
 		t.Errorf("tlsCert=%q tlsKey=%q", s.tlsCert, s.tlsKey)
+	}
+}
+func TestTriggerManagerKeepsNewerPendingEntry(t *testing.T) {
+	release := make(chan struct{})
+	var running atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	m := NewTriggerManager(func(ctx context.Context, _, _ string) error {
+		n := running.Add(1)
+		for {
+			prev := maxConcurrent.Load()
+			if n <= prev || maxConcurrent.CompareAndSwap(prev, n) {
+				break
+			}
+		}
+		defer running.Add(-1)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = m.Trigger(context.Background(), "group/proj", "push")
+		}()
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	time.Sleep(2500 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := maxConcurrent.Load(); got > 1 {
+		t.Errorf("%d concurrent fetches for one project; debouncing should serialize them", got)
+	}
+
+	m.mu.Lock()
+	remaining := len(m.pending)
+	m.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("pending map leaked %d entries", remaining)
 	}
 }

@@ -171,7 +171,9 @@ func newServeCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			metrics.Register(metrics.Registry)
+			if err := metrics.Register(metrics.Registry); err != nil {
+				return err
+			}
 			srv := metrics.NewServer(cfg.Metrics.Addr)
 			ctx, cancel := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
@@ -443,7 +445,9 @@ func newSyncCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			metrics.Register(metrics.Registry)
+			if err := metrics.Register(metrics.Registry); err != nil {
+				return err
+			}
 			sigCtx, sigCancel := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
 			defer sigCancel()

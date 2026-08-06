@@ -6,6 +6,7 @@ package consistency
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -70,14 +71,23 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	result := reconciler.Result{Detail: "sweep complete"}
 	drifts := 0
 
+	unanalyzed := 0
 	for _, table := range tablesToCount {
 		pCount, err := rowCount(ctx, r.primary, table)
+		if errors.Is(err, errCountUnknown) {
+			unanalyzed++
+			continue
+		}
 		if err != nil {
 			result.Remaining++
 			result.Detail = fmt.Sprintf("%s; %s primary count error: %v", result.Detail, table, err)
 			continue
 		}
 		sCount, err := rowCount(ctx, r.secondary, table)
+		if errors.Is(err, errCountUnknown) {
+			unanalyzed++
+			continue
+		}
 		if err != nil {
 			result.Remaining++
 			result.Detail = fmt.Sprintf("%s; %s secondary count error: %v", result.Detail, table, err)
@@ -94,6 +104,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		}
 	}
 
+	if unanalyzed > 0 {
+		log.Info().Int("tables", unanalyzed).
+			Msg("row-count comparison skipped for tables with no ANALYZE statistics (normal on a fresh standby)")
+		result.Detail = fmt.Sprintf("%s; %d tables not yet analyzed", result.Detail, unanalyzed)
+	}
+
 	if r.reposPath != "" {
 		fsckDrifts := r.sampleGitFsck(ctx)
 		drifts += fsckDrifts
@@ -104,19 +120,38 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	return result
 }
 
+// errCountUnknown means the table has no usable estimate — reltuples is
+// -1 until the first ANALYZE, which is the normal state of a
+// freshly-restored standby. Comparing that to the primary's real count
+// would report drift for every table on a brand-new replica.
+var errCountUnknown = errors.New("row count estimate unavailable")
+
 // rowCount returns the approximate row count for a table.
+//
+// reltuples is a planner estimate maintained by ANALYZE, not a count.
+// Two independently-vacuumed databases drift in their estimates for
+// reasons unrelated to replication, which is what the tolerance band in
+// isApproxEqual exists to absorb. The relation is schema-qualified to
+// pg_catalog's notion of the public schema so a same-named table in
+// another schema cannot match instead.
 func rowCount(ctx context.Context, pool rowQuerier, table string) (int64, error) {
 	var n int64
 	err := pool.QueryRow(ctx, `
-		SELECT reltuples::bigint
-		FROM pg_class
-		WHERE relname = $1 AND relkind = 'r'
+		SELECT c.reltuples::bigint
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = $1
+		  AND c.relkind = 'r'
+		  AND n.nspname = 'public'
 		LIMIT 1`, table).Scan(&n)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return 0, nil
 		}
 		return 0, err
+	}
+	if n < 0 {
+		return 0, errCountUnknown
 	}
 	return n, nil
 }
@@ -169,12 +204,24 @@ func (r *Reconciler) sampleGitFsck(ctx context.Context) int {
 	if n < 1 {
 		n = 1
 	}
+	if n > len(allRepos) {
+		n = len(allRepos)
+	}
+
+	// Draw without replacement. Sampling with rng.Intn per iteration
+	// repeats repos, so the effective coverage was below the configured
+	// consistency_sample_pct — a partial Fisher-Yates shuffle gives
+	// exactly n distinct repos.
 	// #nosec G404 -- picks which repos to spot-check for corruption on a
 	// replica we own. Nothing authenticates or authorizes on this value.
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	failed := 0
 	for i := 0; i < n; i++ {
-		repo := allRepos[rng.Intn(len(allRepos))]
+		j := i + rng.Intn(len(allRepos)-i)
+		allRepos[i], allRepos[j] = allRepos[j], allRepos[i]
+	}
+
+	failed := 0
+	for _, repo := range allRepos[:n] {
 		if !gitFsck(ctx, repo) {
 			failed++
 			metrics.DriftTotal.WithLabelValues(reconciler.QualifyName("git_fsck", r.secondaryName), "critical").Inc()

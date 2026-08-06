@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestNewServer(t *testing.T) {
@@ -31,4 +33,16 @@ func TestServerStartCancel(t *testing.T) {
 
 func TestRegisterDoesNotPanic(t *testing.T) {
 	Register(Registry)
+}
+
+// MustRegister panics on a duplicate collector, so a second Register
+// call took the whole process down.
+func TestRegisterIsIdempotent(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	if err := Register(reg); err != nil {
+		t.Fatalf("first Register: %v", err)
+	}
+	if err := Register(reg); err != nil {
+		t.Fatalf("second Register should be a no-op, got: %v", err)
+	}
 }

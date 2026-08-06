@@ -232,6 +232,12 @@ func hashedStorageHash(projectID int32) string {
 // success, false on failure.
 func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 	if p.RepoPath == "" {
+		// Legacy storage with no routes row: nothing identifies the
+		// repository on disk. This used to return false with no output,
+		// so the project counted as failed on every sweep forever with
+		// no indication of which project or why.
+		log.Warn().Int32("project_id", p.ID).
+			Msg("project has no route path and is not using hashed storage; cannot resolve its repository on disk")
 		return false
 	}
 

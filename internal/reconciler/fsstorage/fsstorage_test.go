@@ -112,11 +112,18 @@ func TestReconcileNoSuchFileSkipped(t *testing.T) {
 	r := New(primary, &config.SiteConfig{}, false, sshexec.Default)
 	r = r.WithRunner(&fsMockRunner{err: errors.New("exit 1"), out: []byte("rsync: change_dir \"/uploads\" failed: No such file or directory (2)")})
 	res := r.Reconcile(context.Background())
+	// A missing path is not fatal — some installs legitimately lack an
+	// lfs-objects directory — but it is not work done either. Counting
+	// it as repaired made a misconfigured fs_paths report "rsynced 4
+	// paths" while replicating three.
 	if !res.OK {
-		t.Errorf("expected OK when missing path skipped, got: %s", res.Detail)
+		t.Errorf("a missing path should not fail the sweep, got: %s", res.Detail)
 	}
-	if res.Repaired != 1 {
-		t.Errorf("Repaired = %d, want 1 (skip counted as success)", res.Repaired)
+	if res.Repaired != 0 {
+		t.Errorf("Repaired = %d, want 0 — a skipped path was not replicated", res.Repaired)
+	}
+	if !strings.Contains(res.Detail, "do not exist on the primary") {
+		t.Errorf("Detail should surface the skip, got: %s", res.Detail)
 	}
 }
 

@@ -5,9 +5,12 @@ package fsstorage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/localcmd"
@@ -84,6 +87,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	start := time.Now()
 	failed := 0
 	repaired := 0
+	skipped := 0
 
 	for _, pair := range r.pathPairs {
 		select {
@@ -91,11 +95,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 			return reconciler.Result{OK: false, Detail: "cancelled", Remaining: len(r.pathPairs)}
 		default:
 		}
-		if err := r.rsyncPath(ctx, pair); err != nil {
+		switch err := r.rsyncPath(ctx, pair); {
+		case err == nil:
+			repaired++
+		case errors.Is(err, errPathMissing):
+			skipped++
+			metrics.DriftTotal.WithLabelValues(name+":"+pair.Src, "warning").Inc()
+		default:
 			failed++
 			metrics.DriftTotal.WithLabelValues(r.Name()+":"+pair.Src, "critical").Inc()
-		} else {
-			repaired++
 		}
 	}
 
@@ -108,16 +116,21 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 
 	if failed > 0 {
 		return reconciler.Result{
-			OK:        false,
-			Detail:    fmt.Sprintf("rsynced %d/%d paths in %s (%d failed)", repaired, len(r.pathPairs), elapsed, failed),
+			OK: false,
+			Detail: fmt.Sprintf("rsynced %d/%d paths in %s (%d failed, %d missing on primary)",
+				repaired, len(r.pathPairs), elapsed, failed, skipped),
 			Repaired:  repaired,
 			Remaining: failed,
 		}
 	}
 	metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
+	detail := fmt.Sprintf("rsynced %d paths in %s", repaired, elapsed)
+	if skipped > 0 {
+		detail += fmt.Sprintf(" (%d configured paths do not exist on the primary)", skipped)
+	}
 	return reconciler.Result{
 		OK:       true,
-		Detail:   fmt.Sprintf("rsynced %d paths in %s", len(r.pathPairs), elapsed),
+		Detail:   detail,
 		Repaired: repaired,
 	}
 }
@@ -153,9 +166,20 @@ func (r *Reconciler) rsyncPath(ctx context.Context, pair PathPair) error {
 		errStr := strings.TrimSpace(string(out))
 		if strings.Contains(errStr, "No such file or directory") ||
 			strings.Contains(errStr, "change_dir") {
-			return nil
+			// A configured path that does not exist on the primary is
+			// almost always a typo in fs_paths. Counting it as synced
+			// made a misconfigured deployment report "rsynced 4 paths"
+			// while replicating three. Not fatal — some GitLab installs
+			// legitimately lack e.g. an lfs-objects directory — but it
+			// must be visible and must not count as work done.
+			log.Warn().Str("path", pair.Src).Str("output", errStr).
+				Msg("fs_paths entry does not exist on the primary; skipped")
+			return errPathMissing
 		}
 		return fmt.Errorf("rsync %s: %w: %s", pair.Src, err, errStr)
 	}
 	return nil
 }
+
+// errPathMissing marks a path that was skipped rather than replicated.
+var errPathMissing = errors.New("path does not exist on the primary")
