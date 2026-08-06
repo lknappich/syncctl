@@ -10,6 +10,7 @@ package dbkey
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -43,10 +44,16 @@ func CheckWithRunner(ctx context.Context, primarySSH, secondarySSH string, runne
 		return fmt.Errorf("secondary db_key_base: %w", err)
 	}
 	if pKey != sKey {
-		return fmt.Errorf("db_key_base mismatch: primary and secondary keys differ (update the secondary's /etc/gitlab/gitlab.rb and run `gitlab-ctl reconfigure`)")
+		return fmt.Errorf("%w: update the secondary's /etc/gitlab/gitlab.rb and run `gitlab-ctl reconfigure`", ErrKeyMismatch)
 	}
 	return nil
 }
+
+// ErrKeyMismatch reports that both keys were read successfully and
+// differ. Callers use it to tell a definite mismatch apart from a key
+// that could not be read at all — during a failover the primary is
+// usually unreachable, and that must not be mistaken for a mismatch.
+var ErrKeyMismatch = errors.New("db_key_base mismatch: primary and secondary keys differ")
 
 // fetchKey SSHes to host and extracts the db_key_base. It checks both
 // /etc/gitlab/gitlab.rb (when explicitly set) and the generated

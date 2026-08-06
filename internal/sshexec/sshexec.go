@@ -7,6 +7,7 @@ package sshexec
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -198,6 +199,19 @@ func (c Config) CombinedOutput(ctx context.Context, host, remoteCmd string) ([]b
 	if err != nil {
 		return nil, err
 	}
+	return cmd.CombinedOutput()
+}
+
+// CombinedOutputStdin is CombinedOutput with data piped to the remote
+// command's stdin. It exists so secrets can reach a remote process
+// without appearing in its argv, which is world-readable through
+// /proc/<pid>/cmdline and ps on the remote host.
+func (c Config) CombinedOutputStdin(ctx context.Context, host, remoteCmd string, stdin io.Reader) ([]byte, error) {
+	cmd, err := c.Command(ctx, host, remoteCmd)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdin = stdin
 	return cmd.CombinedOutput()
 }
 

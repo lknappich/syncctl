@@ -4,8 +4,10 @@ package failover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +31,7 @@ type Controller struct {
 	autoFailover  bool
 	dryRun        bool
 	force         bool
+	wipePGData    bool
 	client        *http.Client
 
 	// State.
@@ -66,6 +69,11 @@ func New(cfg *config.Config, dryRun bool) *Controller {
 // checks. Split-brain territory; the caller is expected to have gated
 // this behind an explicit operator flag.
 func (c *Controller) SetForce(force bool) { c.force = force }
+
+// SetWipePGData permits `adopt-as-secondary` to delete the old
+// primary's PostgreSQL data directory before re-basing it. Destructive
+// and irreversible; gate it behind an explicit operator flag.
+func (c *Controller) SetWipePGData(wipe bool) { c.wipePGData = wipe }
 
 // Run starts the health-check loop. Blocks until ctx is cancelled.
 func (c *Controller) Run(ctx context.Context) {
@@ -165,26 +173,7 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 	log.Info().Str("secondary", secondaryName).Bool("dry_run", c.dryRun).
 		Msg("starting failover promotion")
 
-	steps := []promotionStep{
-		{"verify primary down", c.verifyPrimaryDown},
-		{"stop gitlab services on secondary", func(ctx context.Context) error {
-			return c.sshSecondary(ctx, secondary.SSHHost, "sudo gitlab-ctl stop")
-		}},
-		{"promote postgres", func(ctx context.Context) error {
-			return c.sshSecondary(ctx, secondary.SSHHost,
-				"sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_ctl promote "+
-					"-D /var/opt/gitlab/postgresql/data")
-		}},
-		{"disable read-only mode", func(ctx context.Context) error {
-			return readonly.DisableWithConfig(ctx, secondary.SSHHost, c.dryRun, c.sshCfg)
-		}},
-		{"start gitlab services on secondary", func(ctx context.Context) error {
-			return c.sshSecondary(ctx, secondary.SSHHost, "sudo gitlab-ctl start")
-		}},
-		{"verify db_key_base parity", func(ctx context.Context) error {
-			return dbkey.CheckWithConfig(ctx, c.cfg.Primary.SSHHost, secondary.SSHHost, c.sshCfg)
-		}},
-	}
+	steps := c.promotionSteps(secondary)
 
 	for _, step := range steps {
 		log.Info().Str("step", step.name).Msg("failover step")
@@ -210,6 +199,35 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 	return nil
 }
 
+// promotionSteps is the ordered promotion sequence.
+//
+// Parity is a precondition, not a postcondition. Verified after
+// promotion it necessarily SSHes to the primary we just declared dead,
+// so it failed — and Promote returned an error for a promotion that had
+// already succeeded, skipping the post-failover runbook. Verified here
+// it can still reach the old primary, and a mismatch costs nothing
+// because nothing destructive has run yet.
+func (c *Controller) promotionSteps(secondary *config.SiteConfig) []promotionStep {
+	return []promotionStep{
+		{"verify primary down", c.verifyPrimaryDown},
+		{"verify db_key_base parity", c.verifyDBKeyParity(secondary)},
+		{"stop gitlab services on secondary", func(ctx context.Context) error {
+			return c.sshSecondary(ctx, secondary.SSHHost, "sudo gitlab-ctl stop")
+		}},
+		{"promote postgres", func(ctx context.Context) error {
+			return c.sshSecondary(ctx, secondary.SSHHost,
+				"sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_ctl promote "+
+					"-D "+shellquote.Quote(remotePGData))
+		}},
+		{"disable read-only mode", func(ctx context.Context) error {
+			return readonly.DisableWithConfig(ctx, secondary.SSHHost, c.dryRun, c.sshCfg)
+		}},
+		{"start gitlab services on secondary", func(ctx context.Context) error {
+			return c.sshSecondary(ctx, secondary.SSHHost, "sudo gitlab-ctl start")
+		}},
+	}
+}
+
 // AdoptAsSecondary converts the old primary into a secondary of the new
 // primary. This is the role-swap step.
 func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH string) error {
@@ -220,17 +238,37 @@ func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH string)
 	log.Info().Str("old_primary_ssh", oldPrimarySSH).Bool("dry_run", c.dryRun).
 		Msg("starting role-swap: adopting old primary as secondary")
 
+	if len(c.cfg.Secondaries) == 0 {
+		return fmt.Errorf("no secondaries configured; cannot determine the new primary to re-base from")
+	}
+	newPrimary := c.cfg.Secondaries[0]
+
+	defer func() {
+		if err := c.removeRemotePassfile(context.WithoutCancel(ctx), oldPrimarySSH); err != nil {
+			log.Warn().Err(err).Msg("failed to remove the staged replication passfile; remove " + remotePassfile + " manually")
+		}
+	}()
+
 	steps := []promotionStep{
 		{"stop gitlab on old primary", func(ctx context.Context) error {
 			return c.sshSecondary(ctx, oldPrimarySSH, "sudo gitlab-ctl stop")
 		}},
+		{"check old primary PGDATA is clear", func(ctx context.Context) error {
+			return c.checkRemotePGDataEmpty(ctx, oldPrimarySSH)
+		}},
+		{"stage replication credentials on old primary", func(ctx context.Context) error {
+			return c.writeRemotePassfile(ctx, oldPrimarySSH, newPrimary.Postgres)
+		}},
 		{"pg_basebackup from new primary", func(ctx context.Context) error {
-			newPrimary := c.cfg.Secondaries[0]
 			return c.sshSecondary(ctx, oldPrimarySSH,
-				fmt.Sprintf("sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_basebackup "+
-					"-h %s -U %s -D /var/opt/gitlab/postgresql/data -X stream -c fast -R -P",
+				fmt.Sprintf("sudo -u gitlab-psql PGPASSFILE=%s "+
+					"/opt/gitlab/embedded/bin/pg_basebackup "+
+					"-h %s -p %d -U %s -D %s -X stream -c fast -R -P",
+					shellquote.Quote(remotePassfile),
 					shellquote.Quote(newPrimary.Postgres.Host),
-					shellquote.Quote(newPrimary.Postgres.ReplicationUser)))
+					newPrimary.Postgres.Port,
+					shellquote.Quote(newPrimary.Postgres.ReplicationUser),
+					shellquote.Quote(remotePGData)))
 		}},
 		{"enable read-only mode on old primary", func(ctx context.Context) error {
 			return readonly.EnableWithConfig(ctx, oldPrimarySSH, c.dryRun, c.sshCfg)
@@ -260,6 +298,34 @@ type promotionStep struct {
 	fn   func(context.Context) error
 }
 
+// verifyDBKeyParity compares db_key_base between the primary and the
+// secondary about to be promoted. A secondary whose key differs cannot
+// decrypt webhook secrets, access tokens, or 2FA seeds, so promoting it
+// produces a running GitLab with unusable credentials.
+//
+// The primary is usually unreachable by the time we get here — that is
+// why we are failing over. An unreachable primary is not grounds to
+// block promotion, so it downgrades to a warning; only a definite
+// mismatch stops the sequence.
+func (c *Controller) verifyDBKeyParity(secondary *config.SiteConfig) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if c.cfg.Primary.SSHHost == "" || secondary.SSHHost == "" {
+			log.Warn().Msg("db_key_base parity not verified: ssh_host is not configured for both sites")
+			return nil
+		}
+		err := dbkey.CheckWithConfig(ctx, c.cfg.Primary.SSHHost, secondary.SSHHost, c.sshCfg)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, dbkey.ErrKeyMismatch) {
+			return err
+		}
+		log.Warn().Err(err).
+			Msg("db_key_base parity could not be verified (the primary is likely down); continuing — confirm the keys match before trusting encrypted columns")
+		return nil
+	}
+}
+
 // verifyPrimaryDown gates promotion on the primary actually being down.
 //
 // primaryDown is only ever set by the health-check loop in Run, which a
@@ -282,6 +348,69 @@ func (c *Controller) verifyPrimaryDown(ctx context.Context) error {
 	}
 	return fmt.Errorf("primary at %s still answers health checks; refusing to promote (pass --force to override)",
 		c.primaryURL)
+}
+
+const (
+	remotePGData = "/var/opt/gitlab/postgresql/data"
+	// #nosec G101 -- a path on the remote host, not a credential. The
+	// password is written to this file over stdin at run time.
+	remotePassfile = "/var/opt/gitlab/postgresql/.syncctl-pgpass"
+)
+
+// checkRemotePGDataEmpty refuses to re-base onto a populated data
+// directory. pg_basebackup exits rather than write into a non-empty
+// PGDATA, so without this the step failed with a message about the
+// directory rather than about the old cluster still being there.
+// WipePGData opts into clearing it — an explicit, destructive choice.
+func (c *Controller) checkRemotePGDataEmpty(ctx context.Context, sshHost string) error {
+	if c.wipePGData {
+		log.Warn().Str("path", remotePGData).
+			Msg("--wipe-pgdata: deleting the old primary's PostgreSQL data directory")
+		return c.sshSecondary(ctx, sshHost,
+			fmt.Sprintf("sudo rm -rf -- %s && sudo -u gitlab-psql mkdir -p %s",
+				shellquote.Quote(remotePGData), shellquote.Quote(remotePGData)))
+	}
+	out, err := c.sshCfg.CombinedOutput(ctx, sshHost,
+		fmt.Sprintf("sudo ls -A %s 2>/dev/null | head -1", shellquote.Quote(remotePGData)))
+	if err != nil {
+		return fmt.Errorf("inspect %s on %s: %w: %s", remotePGData, sshHost, err, string(out))
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		return fmt.Errorf("%s on %s is not empty: pg_basebackup will not write into an existing "+
+			"data directory. Back up the old cluster and re-run with --wipe-pgdata to replace it",
+			remotePGData, sshHost)
+	}
+	return nil
+}
+
+// writeRemotePassfile stages the replication password in a libpq
+// passfile on the remote host, piped over stdin. Putting it in the
+// pg_basebackup command line instead would expose it to every local user
+// on that host via /proc/<pid>/cmdline for the duration of the backup.
+func (c *Controller) writeRemotePassfile(ctx context.Context, sshHost string, pg config.PostgresConfig) error {
+	if pg.ReplicationPassword == "" {
+		log.Warn().Msg("no replication password configured; pg_basebackup will rely on the remote host's own .pgpass or trust authentication")
+		return nil
+	}
+	// host:port:database:user:password — * matches any database.
+	line := fmt.Sprintf("%s:%d:*:%s:%s\n",
+		pg.Host, pg.Port, pg.ReplicationUser, pg.ReplicationPassword)
+	cmd := fmt.Sprintf("umask 077 && sudo -u gitlab-psql tee %s >/dev/null",
+		shellquote.Quote(remotePassfile))
+	out, err := c.sshCfg.CombinedOutputStdin(ctx, sshHost, cmd, strings.NewReader(line))
+	if err != nil {
+		return fmt.Errorf("stage passfile on %s: %w: %s", sshHost, err, string(out))
+	}
+	return nil
+}
+
+func (c *Controller) removeRemotePassfile(ctx context.Context, sshHost string) error {
+	if c.dryRun {
+		return nil
+	}
+	_, err := c.sshCfg.CombinedOutput(ctx, sshHost,
+		fmt.Sprintf("sudo rm -f -- %s", shellquote.Quote(remotePassfile)))
+	return err
 }
 
 func (c *Controller) sshSecondary(ctx context.Context, sshHost, command string) error {
