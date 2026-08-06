@@ -173,6 +173,35 @@ intended to be permanent.
 
 Secret values are never logged or printed.
 
+## Verifying a release
+
+Release archives carry SLSA build provenance: a signed statement, issued
+by GitHub's Sigstore instance during the release workflow, that a given
+file was produced by this repository at a specific commit. It is the
+answer to "did this binary really come from syncctl, built from the
+source it claims?".
+
+```sh
+gh attestation verify syncctl_1.0.0_linux_amd64.tar.gz --repo lknappich/syncctl
+```
+
+That checks the artifact against the attestation without a key to
+distribute or rotate — the signing identity is the workflow's own OIDC
+token, so a forged artifact would need a signature from this repository's
+release job.
+
+Then confirm the archive matches the published checksum file, which is
+attested alongside it:
+
+```sh
+sha256sum -c syncctl_1.0.0_checksums.txt --ignore-missing
+```
+
+An SBOM is published with each archive.
+
+Container images are not yet attested — see the tracking issue for
+signing `ghcr.io/lknappich/syncctl`.
+
 ## Data protection
 
 [`PRIVACY.md`](PRIVACY.md) covers what personal data replication moves,
