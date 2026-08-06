@@ -17,17 +17,74 @@ import (
 )
 
 func TestRepoDiskPathLegacy(t *testing.T) {
-	got := repoDiskPath("default", false, "group/subgroup/project", 42)
+	got, err := repoDiskPath("default", false, "group/subgroup/project", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := "group/subgroup/project.git"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
+// The sweep reads routes.path straight out of the replicated database.
+// filepath.Join cleans ".." rather than rejecting it, so an unvalidated
+// route path resolves to a location outside the repositories root.
+func TestRepoDiskPathRejectsTraversal(t *testing.T) {
+	for _, bad := range []string{
+		"../../etc/cron.d/x",
+		"a/../../../root/.ssh/authorized_keys",
+		"/absolute/path",
+		"group/../../escape",
+		"group/proj;rm -rf /",
+		"group\\proj",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			if got, err := repoDiskPath("default", false, bad, 42); err == nil {
+				t.Errorf("route path %q accepted, resolved to %q", bad, got)
+			}
+		})
+	}
+}
+
+func TestContainedJoin(t *testing.T) {
+	root := "/var/opt/gitlab/git-data/repositories"
+	tests := []struct {
+		rel     string
+		wantErr bool
+	}{
+		{rel: "group/proj.git"},
+		{rel: "@hashed/6b/86/abc.git"},
+		{rel: "../../etc/cron.d/x.git", wantErr: true},
+		{rel: "a/../../../root/.ssh/authorized_keys.git", wantErr: true},
+		{rel: "..", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.rel, func(t *testing.T) {
+			got, err := containedJoin(root, tc.rel)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected containment error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.HasPrefix(got, root+"/") {
+				t.Errorf("joined path %q escaped %q", got, root)
+			}
+		})
+	}
+}
+
 func TestRepoDiskPathLegacyEmptyRoute(t *testing.T) {
-	got := repoDiskPath("default", false, "", 42)
-	if got != "" {
-		t.Errorf("expected empty path for empty route, got %q", got)
+	got, err := repoDiskPath("default", false, "", 42)
+	if err == nil {
+		t.Errorf("expected an error for an empty route, got %q", got)
+	}
+	if !errors.Is(err, errNoRoutePath) {
+		t.Errorf("err = %v, want errNoRoutePath", err)
 	}
 }
 
@@ -35,7 +92,10 @@ func TestRepoDiskPathHashed(t *testing.T) {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%d", 42)
 	full := hex.EncodeToString(h.Sum(nil))
-	got := repoDiskPath("default", true, "ignored", 42)
+	got, err := repoDiskPath("default", true, "ignored", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := fmt.Sprintf("@hashed/%s/%s/%s.git", full[0:2], full[2:4], full)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -46,7 +106,10 @@ func TestRepoDiskPathHashed(t *testing.T) {
 // "Repository storage paths" page: SHA-256 of the project ID, split into
 // two two-character directory levels under @hashed.
 func TestRepoDiskPathHashedGolden(t *testing.T) {
-	got := repoDiskPath("default", true, "ignored", 1)
+	got, err := repoDiskPath("default", true, "ignored", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := "@hashed/6b/86/6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b.git"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -312,3 +375,27 @@ func (m *mockRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
 func (m *mockRows) Values() ([]any, error)                       { return nil, nil }
 func (m *mockRows) RawValues() [][]byte                          { return nil }
 func (m *mockRows) Conn() *pgx.Conn                              { return nil }
+
+// End-to-end through the sweep: a project whose route path escapes the
+// repositories root must be skipped without running git, and must not
+// stop the sweep from replicating the well-formed projects beside it.
+func TestReconcileSkipsTraversalRouteWithoutRunningGit(t *testing.T) {
+	pool := &mockPool{rows: []projectRow{
+		{ID: 1, RepoPath: "group/good.git"},
+		{ID: 2, RepoPath: "../../etc/cron.d/evil.git"},
+	}}
+	runner := &mockGitRunner{out: []byte("")}
+	r := (&Reconciler{primarySSHHost: "p", reposPath: "/var/opt/gitlab/git-data/repositories", maxParallel: 1}).
+		WithPool(pool).WithRunner(runner)
+	r.Reconcile(context.Background())
+
+	for _, call := range runner.calls {
+		joined := strings.Join(call.args, " ")
+		if strings.Contains(joined, "/etc/cron.d") {
+			t.Errorf("git ran against a path outside the repositories root: %s", joined)
+		}
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("expected only the well-formed project to be fetched, got %d calls", len(runner.calls))
+	}
+}

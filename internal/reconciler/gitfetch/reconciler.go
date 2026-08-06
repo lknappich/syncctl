@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -194,7 +195,16 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 		if err := rows.Scan(&p.ID, &storage, &namespaceID, &hashed, &routePath); err != nil {
 			return nil, err
 		}
-		p.RepoPath = repoDiskPath(storage, hashed, routePath.String, p.ID)
+		diskPath, err := repoDiskPath(storage, hashed, routePath.String, p.ID)
+		if err != nil {
+			// One malformed row must not stop replicating everything
+			// else; skip it and say which project was skipped.
+			log.Warn().Err(err).Int32("project_id", p.ID).
+				Str("route_path", routePath.String).
+				Msg("skipping project with an unusable repository path")
+			continue
+		}
+		p.RepoPath = diskPath
 		projects = append(projects, p)
 	}
 	return projects, rows.Err()
@@ -207,15 +217,45 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 //     lowercase hex SHA-256 of the project ID and AA/BB are its first
 //     and second character pairs.
 //   - legacy storage: <path_with_namespace>.git, taken from the route path.
-func repoDiskPath(_ string, hashed bool, routePath string, projectID int32) string {
+//
+// The route path is read from the replicated database and is written by
+// GitLab from user-supplied group and project names. It is validated
+// here rather than at the callers so both entry points — the periodic
+// sweep and the webhook trigger — share one gate. Previously only
+// FetchProject validated, leaving the sweep, which runs over every
+// project every few minutes, to feed unchecked values to filepath.Join.
+// Join *cleans* rather than rejects, so "../../etc/cron.d/x" resolves to
+// a path outside the repository root.
+func repoDiskPath(_ string, hashed bool, routePath string, projectID int32) (string, error) {
 	if hashed {
 		h := hashedStorageHash(projectID)
-		return fmt.Sprintf("@hashed/%s/%s/%s.git", h[0:2], h[2:4], h)
+		return fmt.Sprintf("@hashed/%s/%s/%s.git", h[0:2], h[2:4], h), nil
 	}
 	if routePath == "" {
-		return ""
+		return "", errNoRoutePath
 	}
-	return routePath + ".git"
+	if err := projectpath.Validate(routePath); err != nil {
+		return "", fmt.Errorf("route path %q is not a valid project path: %w", routePath, err)
+	}
+	return routePath + ".git", nil
+}
+
+// errNoRoutePath means a legacy-storage project has no routes row, so
+// nothing identifies its repository on disk.
+var errNoRoutePath = errors.New("project has no route path and is not using hashed storage")
+
+// containedJoin joins rel onto root and confirms the result is still
+// under root. filepath.Join resolves ".." rather than rejecting it, so
+// this is the check that actually enforces containment — a second line
+// of defence behind projectpath.Validate, since a grammar check and a
+// containment check fail in different ways.
+func containedJoin(root, rel string) (string, error) {
+	joined := filepath.Join(root, rel)
+	cleanRoot := filepath.Clean(root)
+	if joined != cleanRoot && !strings.HasPrefix(joined, cleanRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q resolves to %q, outside %q", rel, joined, cleanRoot)
+	}
+	return joined, nil
 }
 
 // hashedStorageHash returns the 64-char lowercase hex SHA-256 of the
@@ -252,7 +292,12 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 		return false
 	}
 
-	localPath := filepath.Join(r.reposPath, p.RepoPath)
+	localPath, err := containedJoin(r.reposPath, p.RepoPath)
+	if err != nil {
+		log.Warn().Err(err).Int32("project_id", p.ID).Str("repo", p.RepoPath).
+			Msg("refusing to fetch outside the repositories root")
+		return false
+	}
 	remoteURL := ep.GitURL("/var/opt/gitlab/git-data/repositories/" + p.RepoPath)
 
 	args := []string{
@@ -335,7 +380,11 @@ func (r *Reconciler) resolveProject(ctx context.Context, projectPath string) (pr
 	if err := rows.Scan(&p.ID, &storage, &hashed); err != nil {
 		return projectRow{}, fmt.Errorf("scan project %s: %w", projectPath, err)
 	}
-	p.RepoPath = repoDiskPath(storage, hashed, projectPath, p.ID)
+	diskPath, err := repoDiskPath(storage, hashed, projectPath, p.ID)
+	if err != nil {
+		return projectRow{}, fmt.Errorf("resolve project %s: %w", projectPath, err)
+	}
+	p.RepoPath = diskPath
 	return p, nil
 }
 
