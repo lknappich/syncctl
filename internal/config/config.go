@@ -1,13 +1,15 @@
 // Package config defines the runtime configuration for syncctl.
 //
-// Configuration is loaded from a YAML file. All secret values MUST be
+// Configuration is loaded from a YAML file. All secret values SHOULD be
 // supplied via environment variables referenced by ${ENV_VAR} placeholders
-// in the YAML; literals are rejected for any field tagged `env:""`.
+// in the YAML. A literal in a field tagged `env:"required"` is warned
+// about at load and will become an error in the next major version.
 package config
 
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"reflect"
@@ -275,9 +277,7 @@ func Load(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	if err := checkSecretsAreEnvRefs(&c); err != nil {
-		return nil, err
-	}
+	warnSecretsNotEnvRefs(&c)
 	if err := resolveEnvInStruct(&c); err != nil {
 		return nil, err
 	}
@@ -295,13 +295,30 @@ var envRefRe = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 // "prefix-${VAR}" would leave part of the secret in the file.
 var envRefOnlyRe = regexp.MustCompile(`^\$\{[A-Z_][A-Z0-9_]*\}$`)
 
-// checkSecretsAreEnvRefs enforces the `env:"required"` tag: every field
-// carrying it must be either unset or a bare ${VAR} reference. It runs
-// before resolveEnvInStruct, while placeholders are still literal.
+// warnSecretsNotEnvRefs reports every `env:"required"` field holding a
+// literal instead of a bare ${VAR} reference. It runs before
+// resolveEnvInStruct, while placeholders are still literal text.
 //
 // Without this the tag was documentation only, and a plaintext password
-// written into the YAML was accepted in silence.
-func checkSecretsAreEnvRefs(c *Config) error {
+// in the YAML was accepted in silence. It warns rather than rejects:
+// refusing to load would break a running deployment on upgrade, and for
+// a disaster-recovery tool an unstartable binary is its own incident.
+// The plan is to reject in the next major version — see SECURITY.md.
+func warnSecretsNotEnvRefs(c *Config) {
+	var errs []error
+	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
+	for _, err := range errs {
+		log.Warn().Msg(err.Error())
+	}
+	if len(errs) > 0 {
+		log.Warn().Int("fields", len(errs)).
+			Msg("secrets are stored as literals in the config file; move them to environment variables — this will become a load error in the next major version")
+	}
+}
+
+// CheckSecretsAreEnvRefs reports literal secrets as an error, for callers
+// that want to enforce rather than warn (config-validate --strict).
+func CheckSecretsAreEnvRefs(c *Config) error {
 	var errs []error
 	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
 	return errors.Join(errs...)
@@ -453,7 +470,7 @@ func (c *Config) validate() error {
 	}
 	c.warnInsecureSSL(&errs)
 	c.validateSSHHosts(&errs)
-	c.validatePaths(&errs)
+	c.warnInvalidPaths()
 	c.validateSSHPolicy(&errs)
 	c.validateExternalURLs(&errs)
 	c.validateWebhookTLS(&errs)
@@ -498,11 +515,9 @@ func (c *Config) validate() error {
 		c.Sync.LagCriticalThreshold = 5 * time.Minute
 	}
 	if c.Metrics.Addr == "" {
-		// Loopback by default: /metrics has no auth and exposes site
-		// names, replication lag, and drift counters. Set an explicit
-		// addr to expose it, and scrape over a private network.
-		c.Metrics.Addr = "127.0.0.1:9101"
+		c.Metrics.Addr = ":9101"
 	}
+	c.warnMetricsExposed()
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
 	}
@@ -548,10 +563,23 @@ func (c *Config) validateSSHHosts(errs *[]error) {
 	}
 }
 
-// validatePaths rejects filesystem paths that are relative or carry
-// characters no legitimate path needs. These values reach rsync targets
-// and remote command lines, so constraining them at load time is
-// cheaper than reasoning about each call site.
+// warnInvalidPaths reports filesystem paths that are relative or carry
+// characters no legitimate path needs. These reach rsync targets and
+// remote command lines, so flagging them at load time is cheaper than
+// reasoning about each call site.
+//
+// It warns rather than rejects: a path this tool dislikes is not worth
+// refusing to start over, and internal/shellquote already makes the
+// values safe at the point of use.
+func (c *Config) warnInvalidPaths() {
+	var errs []error
+	c.validatePaths(&errs)
+	for _, err := range errs {
+		log.Warn().Msg(err.Error())
+	}
+}
+
+// validatePaths collects path problems without deciding their severity.
 func (c *Config) validatePaths(errs *[]error) {
 	check := func(label, path string) {
 		if path == "" {
@@ -653,6 +681,21 @@ func (c *Config) validateWebhookTLS(errs *[]error) {
 		*errs = append(*errs, errors.New("webhook.tls_key is set but webhook.tls_cert is not"))
 	case c.Webhook.TLSCert == "" && c.Webhook.TLSKey == "":
 		log.Warn().Msg("webhook receiver is serving plaintext HTTP — the GitLab secret token is sent in a header on every delivery; set webhook.tls_cert/tls_key or front it with a TLS-terminating proxy")
+	}
+}
+
+// warnMetricsExposed flags a /metrics listener reachable from off-host.
+// The endpoint has no authentication and exposes site names, replication
+// lag, and drift counters. The default stays :9101 so upgrades do not
+// silently stop existing scrapers; this says what that costs.
+func (c *Config) warnMetricsExposed() {
+	host, _, err := net.SplitHostPort(c.Metrics.Addr)
+	if err != nil {
+		return
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		log.Warn().Str("addr", c.Metrics.Addr).
+			Msg("/metrics is bound to all interfaces with no authentication; bind 127.0.0.1 and scrape over a private network unless this is already on one")
 	}
 }
 

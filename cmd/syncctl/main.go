@@ -265,38 +265,53 @@ func buildReconcilers(ctx context.Context, cfg *config.Config, dryRun bool) ([]r
 	return recs, cleanup, nil
 }
 
+// metricSite is the suffix appended to reconciler names and the metric
+// "component" label.
+//
+// With a single secondary it is empty, so names stay exactly as they
+// were before multi-secondary support landed and existing dashboards and
+// alerts keep matching. With several secondaries the label has to
+// disambiguate, or two sites collide into one time series.
+func metricSite(cfg *config.Config, s *config.SiteConfig) string {
+	if len(cfg.Secondaries) < 2 {
+		return ""
+	}
+	return s.Name
+}
+
 // buildSiteReconcilers constructs the reconcilers that replicate the
 // primary to one secondary.
 func buildSiteReconcilers(ctx context.Context, cfg *config.Config, s *config.SiteConfig,
 	pgRec *pgreconciler.Reconciler, dryRun bool) ([]reconciler.Reconciler, error) {
 	var recs []reconciler.Reconciler
+	site := metricSite(cfg, s)
 
 	// Git data sync.
 	switch cfg.Primary.Git.Mode {
 	case "rsync":
-		recs = append(recs, gitrsync.New(&cfg.Primary, s, dryRun, cfg.SSHExecConfig()))
+		recs = append(recs, gitrsync.New(&cfg.Primary, s, site, dryRun, cfg.SSHExecConfig()))
 	case "fetch":
-		recs = append(recs, gitfetch.New(cfg.Primary.SSHHost, s.Git.ReposPath, s.Name,
+		recs = append(recs, gitfetch.New(cfg.Primary.SSHHost, s.Git.ReposPath, site,
 			pgRec.PrimaryPool(), dryRun, cfg.SSHExecConfig()))
 	}
 
 	// Object storage.
 	switch cfg.Primary.ObjectStore.Backend {
 	case "s3":
-		osRec, err := objectstorage.New(ctx, s.Name, cfg.Primary.ObjectStore.S3, s.ObjectStore.S3)
+		osRec, err := objectstorage.New(ctx, site, cfg.Primary.ObjectStore.S3, s.ObjectStore.S3)
 		if err != nil {
 			return nil, fmt.Errorf("object storage reconciler for %s: %w", s.Name, err)
 		}
 		recs = append(recs, osRec)
 	case "fs":
-		recs = append(recs, fsstorage.New(&cfg.Primary, s, dryRun, cfg.SSHExecConfig()))
+		recs = append(recs, fsstorage.New(&cfg.Primary, s, site, dryRun, cfg.SSHExecConfig()))
 	}
 
 	// Registry. New returns nil when either side has no registry.url —
 	// there is no endpoint to check, and a reconciler that probes the
 	// wrong host reports on something other than the registry.
 	if cfg.Primary.Registry != nil {
-		if rec := registry.New(&cfg.Primary, s, dryRun); rec != nil {
+		if rec := registry.New(&cfg.Primary, s, site, dryRun); rec != nil {
 			recs = append(recs, rec)
 		} else {
 			log.Warn().Msg("registry configured but registry.url is not set on both sites; registry parity will not be checked")
@@ -307,14 +322,14 @@ func buildSiteReconcilers(ctx context.Context, cfg *config.Config, s *config.Sit
 	recs = append(recs, consistency.New(
 		pgRec.PrimaryPool(),
 		pgRec.SecondaryPool(s.Name),
-		s.Name,
+		site,
 		s.Git.ReposPath,
 		cfg.Sync.ConsistencySamplePct,
 	))
 
 	// API validator (optional).
 	if cfg.APIValidator != nil && cfg.APIValidator.Enabled {
-		recs = append(recs, apivalidator.New(cfg, s))
+		recs = append(recs, apivalidator.New(cfg, s, site))
 	}
 
 	return recs, nil

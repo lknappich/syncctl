@@ -51,7 +51,7 @@ type Reconciler struct {
 // Returns nil when either side has no registry.url configured — there is
 // no endpoint to check, and inventing one produces a check that only
 // looks like it ran.
-func New(primary, secondary *config.SiteConfig, dryRun bool) *Reconciler {
+func New(primary, secondary *config.SiteConfig, site string, dryRun bool) *Reconciler {
 	primaryURL := registryBaseURL(primary)
 	secondaryURL := registryBaseURL(secondary)
 	if primaryURL == "" || secondaryURL == "" {
@@ -62,7 +62,7 @@ func New(primary, secondary *config.SiteConfig, dryRun bool) *Reconciler {
 	primaryClient := &http.Client{Timeout: timeout}
 	secondaryClient := &http.Client{Timeout: timeout}
 	return &Reconciler{
-		site:            secondary.Name,
+		site:            site,
 		primaryURL:      primaryURL,
 		secondaryURL:    secondaryURL,
 		primaryClient:   primaryClient,

@@ -39,9 +39,9 @@ type PathPair struct {
 }
 
 // New creates an FS storage reconciler from the primary/secondary configs.
-func New(primary, secondary *config.SiteConfig, dryRun bool, sshCfg sshexec.Config) *Reconciler {
+func New(primary, secondary *config.SiteConfig, site string, dryRun bool, sshCfg sshexec.Config) *Reconciler {
 	r := &Reconciler{
-		site:    secondary.Name,
+		site:    site,
 		sshHost: primary.SSHHost,
 		sshCfg:  sshCfg,
 		dryRun:  dryRun,

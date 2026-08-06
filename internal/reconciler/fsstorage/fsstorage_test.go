@@ -24,7 +24,7 @@ func TestNewCollectsFSPaths(t *testing.T) {
 	}
 	secondary := &config.SiteConfig{}
 
-	r := New(primary, secondary, true, sshexec.Default)
+	r := New(primary, secondary, "", true, sshexec.Default)
 	if len(r.pathPairs) != 3 {
 		t.Errorf("expected 3 path pairs, got %d", len(r.pathPairs))
 	}
@@ -40,7 +40,7 @@ func TestNewNoRegistry(t *testing.T) {
 	}
 	secondary := &config.SiteConfig{}
 
-	r := New(primary, secondary, true, sshexec.Default)
+	r := New(primary, secondary, "", true, sshexec.Default)
 	if len(r.pathPairs) != 1 {
 		t.Errorf("expected 1 path pair, got %d", len(r.pathPairs))
 	}
@@ -55,14 +55,14 @@ func TestNewNoPaths(t *testing.T) {
 	}
 	secondary := &config.SiteConfig{}
 
-	r := New(primary, secondary, true, sshexec.Default)
+	r := New(primary, secondary, "", true, sshexec.Default)
 	if len(r.pathPairs) != 0 {
 		t.Errorf("expected 0 path pairs, got %d", len(r.pathPairs))
 	}
 }
 
 func TestReconcileNoPaths(t *testing.T) {
-	r := New(&config.SiteConfig{SSHHost: "p:22"}, &config.SiteConfig{}, false, sshexec.Default)
+	r := New(&config.SiteConfig{SSHHost: "p:22"}, &config.SiteConfig{}, "", false, sshexec.Default)
 	res := r.Reconcile(context.Background())
 	if !res.OK {
 		t.Errorf("expected OK with no paths, got: %s", res.Detail)
@@ -77,7 +77,7 @@ func TestReconcileSuccess(t *testing.T) {
 		SSHHost:     "p:22",
 		ObjectStore: config.ObjectStoreConfig{FSPaths: []string{"/uploads", "/artifacts"}},
 	}
-	r := New(primary, &config.SiteConfig{}, false, sshexec.Default)
+	r := New(primary, &config.SiteConfig{}, "", false, sshexec.Default)
 	r = r.WithRunner(&fsMockRunner{out: []byte("")})
 	res := r.Reconcile(context.Background())
 	if !res.OK {
@@ -93,7 +93,7 @@ func TestReconcilePartialFailure(t *testing.T) {
 		SSHHost:     "p:22",
 		ObjectStore: config.ObjectStoreConfig{FSPaths: []string{"/uploads", "/artifacts"}},
 	}
-	r := New(primary, &config.SiteConfig{}, false, sshexec.Default)
+	r := New(primary, &config.SiteConfig{}, "", false, sshexec.Default)
 	r = r.WithRunner(&fsMockRunner{err: errors.New("rsync failed"), out: []byte("oops")})
 	res := r.Reconcile(context.Background())
 	if res.OK {
@@ -109,7 +109,7 @@ func TestReconcileNoSuchFileSkipped(t *testing.T) {
 		SSHHost:     "p:22",
 		ObjectStore: config.ObjectStoreConfig{FSPaths: []string{"/uploads"}},
 	}
-	r := New(primary, &config.SiteConfig{}, false, sshexec.Default)
+	r := New(primary, &config.SiteConfig{}, "", false, sshexec.Default)
 	r = r.WithRunner(&fsMockRunner{err: errors.New("exit 1"), out: []byte("rsync: change_dir \"/uploads\" failed: No such file or directory (2)")})
 	res := r.Reconcile(context.Background())
 	// A missing path is not fatal — some installs legitimately lack an
@@ -132,7 +132,7 @@ func TestReconcileCancelled(t *testing.T) {
 		SSHHost:     "p:22",
 		ObjectStore: config.ObjectStoreConfig{FSPaths: []string{"/a", "/b"}},
 	}
-	r := New(primary, &config.SiteConfig{}, false, sshexec.Default)
+	r := New(primary, &config.SiteConfig{}, "", false, sshexec.Default)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	res := r.Reconcile(ctx)
@@ -152,7 +152,7 @@ func TestNewRegistrySecondaryPath(t *testing.T) {
 	secondary := &config.SiteConfig{
 		Registry: &config.RegistryConfig{FSPath: "/secondary/registry"},
 	}
-	r := New(primary, secondary, false, sshexec.Default)
+	r := New(primary, secondary, "", false, sshexec.Default)
 	pairs := r.PathPairs()
 	if len(pairs) != 1 {
 		t.Fatalf("pairs = %d, want 1", len(pairs))
@@ -171,7 +171,7 @@ func TestNewRegistryPrimaryPathFallback(t *testing.T) {
 		Registry: &config.RegistryConfig{Mode: "fs", FSPath: "/registry"},
 	}
 	secondary := &config.SiteConfig{}
-	r := New(primary, secondary, false, sshexec.Default)
+	r := New(primary, secondary, "", false, sshexec.Default)
 	pairs := r.PathPairs()
 	if len(pairs) != 1 {
 		t.Fatalf("pairs = %d, want 1", len(pairs))

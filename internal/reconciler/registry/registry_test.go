@@ -62,7 +62,7 @@ func TestNewURLConstruction(t *testing.T) {
 		ExternalURL: "https://gitlab.secondary.example.com",
 		Registry:    &config.RegistryConfig{URL: "https://registry.secondary.example.com"},
 	}
-	r := New(primary, secondary, true)
+	r := New(primary, secondary, "", true)
 	if r == nil {
 		t.Fatal("New returned nil for two configured registry URLs")
 	}
@@ -94,7 +94,7 @@ func TestNewReturnsNilWithoutRegistryURL(t *testing.T) {
 	}
 	for label, pair := range cases {
 		t.Run(label, func(t *testing.T) {
-			if got := New(pair[0], pair[1], true); got != nil {
+			if got := New(pair[0], pair[1], "", true); got != nil {
 				t.Errorf("New should return nil; got a reconciler pointed at %q", got.primaryURL)
 			}
 		})

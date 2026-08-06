@@ -224,3 +224,42 @@ func keys(m map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
+
+// A single-secondary deployment — the overwhelmingly common case, and
+// the only one that worked before multi-secondary support — must keep
+// its original metric component labels, so existing dashboards and
+// alerts keep matching after an upgrade.
+func TestSingleSecondaryKeepsUnqualifiedReconcilerNames(t *testing.T) {
+	cfg := &config.Config{
+		Primary: config.SiteConfig{
+			Name: "primary", ExternalURL: "https://p.example.com", SSHHost: "p.example.com",
+			Git:         config.GitStorage{Mode: "rsync", ReposPath: "/repos"},
+			ObjectStore: config.ObjectStoreConfig{Backend: "fs", FSPaths: []string{"/uploads"}},
+		},
+		Secondaries: []config.SiteConfig{
+			{Name: "secondary-us", ExternalURL: "https://us.example.com", Git: config.GitStorage{ReposPath: "/repos"}},
+		},
+	}
+	recs, err := buildSiteReconcilers(t.Context(), cfg, &cfg.Secondaries[0], &pgreconciler.Reconciler{}, true)
+	if err != nil {
+		t.Fatalf("buildSiteReconcilers: %v", err)
+	}
+	for _, r := range recs {
+		if strings.Contains(r.Name(), "@") {
+			t.Errorf("reconciler name %q gained a site suffix with only one secondary", r.Name())
+		}
+	}
+
+	// Add a second secondary and the names must disambiguate.
+	cfg.Secondaries = append(cfg.Secondaries,
+		config.SiteConfig{Name: "secondary-eu", Git: config.GitStorage{ReposPath: "/repos"}})
+	recs, err = buildSiteReconcilers(t.Context(), cfg, &cfg.Secondaries[0], &pgreconciler.Reconciler{}, true)
+	if err != nil {
+		t.Fatalf("buildSiteReconcilers: %v", err)
+	}
+	for _, r := range recs {
+		if !strings.Contains(r.Name(), "@secondary-us") {
+			t.Errorf("reconciler name %q must name its site with several secondaries", r.Name())
+		}
+	}
+}

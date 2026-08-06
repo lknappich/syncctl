@@ -32,11 +32,11 @@ type Reconciler struct {
 }
 
 // New creates an API validator for one secondary.
-func New(cfg *config.Config, secondary *config.SiteConfig) *Reconciler {
+func New(cfg *config.Config, secondary *config.SiteConfig, site string) *Reconciler {
 	primaryURL := strings.TrimSuffix(cfg.Primary.ExternalURL, "/") + "/api/v4"
 	secondaryURL := strings.TrimSuffix(secondary.ExternalURL, "/") + "/api/v4"
 	return &Reconciler{
-		site:           secondary.Name,
+		site:           site,
 		primaryURL:     primaryURL,
 		secondaryURL:   secondaryURL,
 		primaryToken:   cfg.APIValidator.PrimaryToken,
