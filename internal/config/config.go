@@ -436,6 +436,7 @@ func (c *Config) validate() error {
 	}
 	c.warnInsecureSSL(&errs)
 	c.validateSSHHosts(&errs)
+	c.validatePaths(&errs)
 	if c.Primary.Git.Mode == "" {
 		errs = append(errs, errors.New("primary.git.mode is required (rsync|fetch)"))
 	}
@@ -524,6 +525,38 @@ func (c *Config) validateSSHHosts(errs *[]error) {
 	check("primary", c.Primary.SSHHost)
 	for i, s := range c.Secondaries {
 		check(fmt.Sprintf("secondaries[%d]", i), s.SSHHost)
+	}
+}
+
+// validatePaths rejects filesystem paths that are relative or carry
+// characters no legitimate path needs. These values reach rsync targets
+// and remote command lines, so constraining them at load time is
+// cheaper than reasoning about each call site.
+func (c *Config) validatePaths(errs *[]error) {
+	check := func(label, path string) {
+		if path == "" {
+			return
+		}
+		if strings.ContainsAny(path, "\x00\n\r") {
+			*errs = append(*errs, fmt.Errorf("%s contains a NUL or newline", label))
+			return
+		}
+		if !strings.HasPrefix(path, "/") {
+			*errs = append(*errs, fmt.Errorf("%s must be an absolute path, got %q", label, path))
+		}
+	}
+	checkSite := func(label string, s *SiteConfig) {
+		check(label+".git.repos_path", s.Git.ReposPath)
+		for i, p := range s.ObjectStore.FSPaths {
+			check(fmt.Sprintf("%s.object_storage.fs_paths[%d]", label, i), p)
+		}
+		if s.Registry != nil {
+			check(label+".registry.fs_path", s.Registry.FSPath)
+		}
+	}
+	checkSite("primary", &c.Primary)
+	for i := range c.Secondaries {
+		checkSite(fmt.Sprintf("secondaries[%d]", i), &c.Secondaries[i])
 	}
 }
 

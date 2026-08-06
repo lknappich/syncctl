@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -671,5 +672,58 @@ secondaries:
 	}
 	if !strings.Contains(err.Error(), "primary.postgres.password") {
 		t.Errorf("error should name the offending field, got: %v", err)
+	}
+}
+func TestValidatePaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		site    SiteConfig
+		wantErr string
+	}{
+		{name: "absolute paths", site: SiteConfig{
+			Git:         GitStorage{ReposPath: "/var/opt/gitlab/git-data/repositories"},
+			ObjectStore: ObjectStoreConfig{FSPaths: []string{"/var/opt/gitlab/uploads"}},
+		}},
+		{name: "empty is fine", site: SiteConfig{}},
+		{
+			name:    "relative repos_path",
+			site:    SiteConfig{Git: GitStorage{ReposPath: "repositories"}},
+			wantErr: "primary.git.repos_path",
+		},
+		{
+			name:    "relative fs_path",
+			site:    SiteConfig{ObjectStore: ObjectStoreConfig{FSPaths: []string{"/ok", "uploads"}}},
+			wantErr: "primary.object_storage.fs_paths[1]",
+		},
+		{
+			name:    "newline in path",
+			site:    SiteConfig{Git: GitStorage{ReposPath: "/repos\nrm -rf /"}},
+			wantErr: "NUL or newline",
+		},
+		{
+			name:    "relative registry fs_path",
+			site:    SiteConfig{Registry: &RegistryConfig{FSPath: "registry"}},
+			wantErr: "primary.registry.fs_path",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Primary: tc.site}
+			var errs []error
+			c.validatePaths(&errs)
+			joined := errors.Join(errs...)
+			if tc.wantErr == "" {
+				if joined != nil {
+					t.Fatalf("unexpected errors: %v", joined)
+				}
+				return
+			}
+			if joined == nil {
+				t.Fatal("expected a path validation error")
+			}
+			if !strings.Contains(joined.Error(), tc.wantErr) {
+				t.Errorf("error %q should mention %q", joined, tc.wantErr)
+			}
+		})
 	}
 }

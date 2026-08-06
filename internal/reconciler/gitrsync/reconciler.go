@@ -71,6 +71,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	}
 	args := []string{
 		"-az", "--delete", "--checksum",
+		// -s stops the remote shell from expanding the path, so a
+		// repos_path
+		// containing spaces or glob characters is taken literally.
+		"-s",
 		"-e", sshCmd,
 		"--rsync-path", "sudo rsync",
 	}
