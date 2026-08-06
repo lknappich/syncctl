@@ -159,16 +159,71 @@ func TestFindSecondaryNotFound(t *testing.T) {
 }
 
 func TestVerifyPrimaryDownRefusesWhenUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
 	cfg := &config.Config{
-		Primary: config.SiteConfig{Name: "p"},
-		Secondaries: []config.SiteConfig{
-			{Name: "s"},
-		},
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: srv.URL},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
 	}
 	fc := New(cfg, false)
 	err := fc.verifyPrimaryDown(context.Background())
 	if err == nil {
-		t.Fatal("verifyPrimaryDown should error when primary is up")
+		t.Fatal("verifyPrimaryDown should error while the primary answers health checks")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("error should point at the override flag, got: %v", err)
+	}
+}
+
+// A one-shot `syncctl failover` never runs the health-check loop, so
+// promotion has to probe rather than read state only the daemon sets.
+func TestVerifyPrimaryDownProbesWhenLoopNeverRan(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: srv.URL},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
+	}
+	fc := New(cfg, false)
+	if fc.IsPrimaryDown() {
+		t.Fatal("primaryDown should start false")
+	}
+	if err := fc.verifyPrimaryDown(context.Background()); err != nil {
+		t.Fatalf("verifyPrimaryDown should pass for an unhealthy primary: %v", err)
+	}
+	if !fc.IsPrimaryDown() {
+		t.Error("a successful probe should record the primary as down")
+	}
+}
+
+func TestVerifyPrimaryDownForceOverridesHealthyPrimary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: srv.URL},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
+	}
+	fc := New(cfg, false)
+	fc.SetForce(true)
+	if err := fc.verifyPrimaryDown(context.Background()); err != nil {
+		t.Fatalf("--force should bypass the liveness gate: %v", err)
+	}
+}
+
+func TestNewClampsQuorumToAtLeastOne(t *testing.T) {
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com"},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
+		Failover:    &config.FailoverConfig{QuorumRequired: 0},
+	}
+	if fc := New(cfg, false); fc.quorum != 1 {
+		t.Errorf("quorum = %d, want 1 — a zero quorum declares every primary down", fc.quorum)
 	}
 }
 

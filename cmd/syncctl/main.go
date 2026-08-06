@@ -486,6 +486,7 @@ func newDBKeyCmd(g *globalFlags) *cobra.Command {
 
 func newFailoverCmd(g *globalFlags) *cobra.Command {
 	var secondaryName string
+	var confirm bool
 	var force bool
 	cmd := &cobra.Command{
 		Use:           "failover",
@@ -503,7 +504,7 @@ func newFailoverCmd(g *globalFlags) *cobra.Command {
 			if secondaryName == "" {
 				return fmt.Errorf("--secondary is required (no secondaries in config)")
 			}
-			if !force && !g.dryRun {
+			if !confirm && !g.dryRun {
 				return fmt.Errorf("failover requires --yes or --dry-run")
 			}
 			sigCtx, sigCancel := signal.NotifyContext(context.Background(),
@@ -512,11 +513,14 @@ func newFailoverCmd(g *globalFlags) *cobra.Command {
 			ctx, cancel := context.WithTimeout(sigCtx, 10*time.Minute)
 			defer cancel()
 			fc := failover.New(cfg, g.dryRun)
+			fc.SetForce(force)
 			return fc.Promote(ctx, secondaryName)
 		},
 	}
 	cmd.Flags().StringVar(&secondaryName, "secondary", "", "name of the secondary to promote")
-	cmd.Flags().BoolVar(&force, "yes", false, "confirm failover (required without --dry-run)")
+	cmd.Flags().BoolVar(&confirm, "yes", false, "confirm failover (required without --dry-run)")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"promote even if the primary still answers health checks (risks split-brain)")
 	return cmd
 }
 

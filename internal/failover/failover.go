@@ -27,6 +27,7 @@ type Controller struct {
 	checkInterval time.Duration
 	autoFailover  bool
 	dryRun        bool
+	force         bool
 	client        *http.Client
 
 	// State.
@@ -54,8 +55,16 @@ func New(cfg *config.Config, dryRun bool) *Controller {
 	} else {
 		fc.quorum = 1
 	}
+	if fc.quorum < 1 {
+		fc.quorum = 1
+	}
 	return fc
 }
+
+// SetForce allows promotion of a primary that still answers health
+// checks. Split-brain territory; the caller is expected to have gated
+// this behind an explicit operator flag.
+func (c *Controller) SetForce(force bool) { c.force = force }
 
 // Run starts the health-check loop. Blocks until ctx is cancelled.
 func (c *Controller) Run(ctx context.Context) {
@@ -77,12 +86,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 // check polls all health URLs and determines if the primary is down.
 func (c *Controller) check(ctx context.Context) {
-	fails := 0
-	for _, url := range c.healthURLs {
-		if !c.pollURL(ctx, url) {
-			fails++
-		}
-	}
+	fails := c.countHealthFailures(ctx)
 	if fails >= c.quorum {
 		c.consecutiveFails.Add(1)
 		down := c.consecutiveFails.Load()
@@ -107,6 +111,18 @@ func (c *Controller) check(ctx context.Context) {
 		c.consecutiveFails.Store(0)
 		c.primaryDown.Store(false)
 	}
+}
+
+// countHealthFailures polls every health URL and returns how many did
+// not answer 200.
+func (c *Controller) countHealthFailures(ctx context.Context) int {
+	fails := 0
+	for _, url := range c.healthURLs {
+		if !c.pollURL(ctx, url) {
+			fails++
+		}
+	}
+	return fails
 }
 
 // pollURL returns true if the URL returns HTTP 200 within the timeout.
@@ -242,11 +258,28 @@ type promotionStep struct {
 	fn   func(context.Context) error
 }
 
+// verifyPrimaryDown gates promotion on the primary actually being down.
+//
+// primaryDown is only ever set by the health-check loop in Run, which a
+// one-shot `syncctl failover` never starts — so reading that field alone
+// made manual promotion impossible. Probe directly when the loop has not
+// established the state.
 func (c *Controller) verifyPrimaryDown(ctx context.Context) error {
-	if !c.primaryDown.Load() {
-		return fmt.Errorf("primary is not declared down; refusing to promote (use --force to override)")
+	if c.force {
+		log.Warn().Msg("--force: skipping the primary liveness check; promoting a primary that is still serving risks split-brain")
+		return nil
 	}
-	return nil
+	if c.primaryDown.Load() {
+		return nil
+	}
+	if fails := c.countHealthFailures(ctx); fails >= c.quorum {
+		c.primaryDown.Store(true)
+		log.Warn().Int("fails", fails).Int("quorum", c.quorum).
+			Msg("primary failed its health checks; proceeding with promotion")
+		return nil
+	}
+	return fmt.Errorf("primary at %s still answers health checks; refusing to promote (pass --force to override)",
+		c.primaryURL)
 }
 
 func (c *Controller) sshSecondary(ctx context.Context, sshHost, command string) error {
