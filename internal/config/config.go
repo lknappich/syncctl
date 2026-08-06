@@ -239,6 +239,9 @@ func Load(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	if err := checkSecretsAreEnvRefs(&c); err != nil {
+		return nil, err
+	}
 	if err := resolveEnvInStruct(&c); err != nil {
 		return nil, err
 	}
@@ -271,6 +274,79 @@ func ExpandEnv(raw []byte) ([]byte, error) {
 			strings.Join(missing, ", "))
 	}
 	return out, nil
+}
+
+// envRefOnlyRe matches a value that is nothing but a single ${VAR}
+// placeholder. Secrets must match it exactly: a partial reference like
+// "prefix-${VAR}" would leave part of the secret in the file.
+var envRefOnlyRe = regexp.MustCompile(`^\$\{[A-Z_][A-Z0-9_]*\}$`)
+
+// checkSecretsAreEnvRefs enforces the `env:"required"` tag: every field
+// carrying it must be either unset or a bare ${VAR} reference. It runs
+// before resolveEnvInStruct, while placeholders are still literal.
+//
+// Without this the tag was documentation only, and a plaintext password
+// written into the YAML was accepted in silence.
+func checkSecretsAreEnvRefs(c *Config) error {
+	var errs []error
+	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
+	return errors.Join(errs...)
+}
+
+func walkSecretFields(v reflect.Value, path string, errs *[]error) {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if !v.IsNil() {
+			walkSecretFields(v.Elem(), path, errs)
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			walkSecretFields(v.Index(i), fmt.Sprintf("%s[%d]", path, i), errs)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			child := joinPath(path, yamlName(field))
+			if field.Tag.Get("env") == "required" && v.Field(i).Kind() == reflect.String {
+				checkSecretField(v.Field(i).String(), child, errs)
+				continue
+			}
+			walkSecretFields(v.Field(i), child, errs)
+		}
+	}
+}
+
+func checkSecretField(value, path string, errs *[]error) {
+	if value == "" || envRefOnlyRe.MatchString(value) {
+		return
+	}
+	*errs = append(*errs, fmt.Errorf(
+		"%s must be an environment reference such as ${MY_SECRET}, not a literal value", path))
+}
+
+func yamlName(f reflect.StructField) string {
+	tag := f.Tag.Get("yaml")
+	if tag == "" {
+		return strings.ToLower(f.Name)
+	}
+	if i := strings.Index(tag, ","); i >= 0 {
+		tag = tag[:i]
+	}
+	if tag == "" {
+		return strings.ToLower(f.Name)
+	}
+	return tag
+}
+
+func joinPath(parent, child string) string {
+	if parent == "" {
+		return child
+	}
+	return parent + "." + child
 }
 
 // resolveEnvInStruct walks the Config struct via reflection and expands

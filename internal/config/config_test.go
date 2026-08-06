@@ -568,3 +568,108 @@ func TestReplicationConnInfoOmitsPassword(t *testing.T) {
 		t.Errorf("DSN lost its connection fields: %s", dsn)
 	}
 }
+func TestCheckSecretsRejectsLiterals(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		wantErr string
+	}{
+		{
+			name: "literal postgres password",
+			cfg: &Config{Primary: SiteConfig{Postgres: PostgresConfig{
+				Password: "hunter2", ReplicationPassword: "${PG_REPL}"}}},
+			wantErr: "primary.postgres.password",
+		},
+		{
+			name:    "literal webhook token",
+			cfg:     &Config{Webhook: &WebhookConfig{SecretToken: "WEBHOOK_SECRET_PLACEHOLDER"}},
+			wantErr: "webhook.secret_token",
+		},
+		{
+			name: "literal s3 secret in a secondary",
+			cfg: &Config{Secondaries: []SiteConfig{{ObjectStore: ObjectStoreConfig{
+				S3: &S3Config{AccessKey: "${S3_AK}", SecretKey: "raw-secret"}}}}},
+			wantErr: "secondaries[0].object_storage.s3.secret_key",
+		},
+		{
+			name: "literal api token",
+			cfg: &Config{APIValidator: &APIValidatorConfig{
+				PrimaryToken: "${P}", SecondaryToken: "glpat-literal"}},
+			wantErr: "api_validator.secondary_token",
+		},
+		{
+			name:    "partial reference is still a literal",
+			cfg:     &Config{Webhook: &WebhookConfig{SecretToken: "prefix-${TOKEN}"}},
+			wantErr: "webhook.secret_token",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSecretsAreEnvRefs(tc.cfg)
+			if err == nil {
+				t.Fatal("expected a literal-secret error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q should name %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckSecretsAcceptsEnvRefsAndEmpty(t *testing.T) {
+	cfg := &Config{
+		Primary: SiteConfig{Postgres: PostgresConfig{
+			Password: "${PG_CTRL}", ReplicationPassword: "${PG_REPL}"}},
+		Secondaries: []SiteConfig{{ObjectStore: ObjectStoreConfig{
+			S3: &S3Config{AccessKey: "${S3_AK}", SecretKey: "${S3_SK}"}}}},
+		Webhook: &WebhookConfig{SecretToken: "${WEBHOOK_SECRET_TOKEN}"},
+	}
+	if err := checkSecretsAreEnvRefs(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCheckSecretsReportsEveryViolation(t *testing.T) {
+	cfg := &Config{Primary: SiteConfig{Postgres: PostgresConfig{
+		Password: "a", ReplicationPassword: "b"}}}
+	err := checkSecretsAreEnvRefs(cfg)
+	if err == nil {
+		t.Fatal("expected errors")
+	}
+	for _, want := range []string{"primary.postgres.password", "primary.postgres.replication_password"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestLoadRejectsLiteralSecret(t *testing.T) {
+	yaml := `
+primary:
+  name: p
+  external_url: https://p.example.com
+  postgres:
+    host: 10.0.0.10
+    port: 5432
+    password: plaintext-password
+    replication_user: repl
+    replication_password: ${PG_REPL_PASSWORD}
+  git:
+    mode: rsync
+    repos_path: /repos
+secondaries:
+  - name: s
+    postgres:
+      host: 10.1.0.10
+      replication_password: ${SEC_REPL_PASSWORD}
+`
+	t.Setenv("PG_REPL_PASSWORD", "x")
+	t.Setenv("SEC_REPL_PASSWORD", "y")
+	_, err := Load(writeTempConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected Load to reject a literal secret")
+	}
+	if !strings.Contains(err.Error(), "primary.postgres.password") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+}

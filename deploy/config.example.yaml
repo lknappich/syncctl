@@ -2,7 +2,8 @@
 #
 # All secret values MUST be supplied via environment variables using the
 # dollar-brace-VAR placeholder syntax. Literal secrets in this file are
-# rejected. Before running syncctl, export the referenced variables, e.g.:
+# rejected at load time, naming the offending field. Before running
+# syncctl, export the referenced variables, e.g.:
 #
 #   export PG_CTRL_PASSWORD=...
 #   export PG_REPL_PASSWORD=...
@@ -102,15 +103,17 @@ log:
 control_db: sqlite://data/syncctl.db
 
 # Optional: webhook receiver for immediate per-project sync on push/create/delete.
+# Export WEBHOOK_SECRET_TOKEN before starting syncctl.
 # webhook:
 #   addr: ":9102"
-#   secret_token: WEBHOOK_SECRET_PLACEHOLDER
+#   secret_token: ${WEBHOOK_SECRET_TOKEN}
 
 # Optional: API-driven observational validator (read-only, never writes).
+# Export PRIMARY_API_TOKEN and SECONDARY_API_TOKEN before starting syncctl.
 # api_validator:
 #   enabled: true
-#   primary_token: PRIMARY_API_TOKEN_PLACEHOLDER
-#   secondary_token: SECONDARY_API_TOKEN_PLACEHOLDER
+#   primary_token: ${PRIMARY_API_TOKEN}
+#   secondary_token: ${SECONDARY_API_TOKEN}
 
 # Optional: SSH host-key verification policy.
 # Production deployments should pin host keys via known_hosts_file and
