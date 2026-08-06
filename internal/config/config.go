@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -172,6 +173,13 @@ type LogConfig struct {
 type WebhookConfig struct {
 	Addr        string `yaml:"addr"`                        // e.g. ":9102"
 	SecretToken string `yaml:"secret_token" env:"required"` // GitLab webhook secret token for validation
+
+	// TLSCert / TLSKey serve the receiver over HTTPS. GitLab sends the
+	// secret token in a header on every delivery, so without TLS here or
+	// a TLS-terminating proxy in front, that token crosses the network in
+	// cleartext.
+	TLSCert string `yaml:"tls_cert,omitempty"`
+	TLSKey  string `yaml:"tls_key,omitempty"`
 }
 
 // APIValidatorConfig enables the optional API-based observational
@@ -440,6 +448,8 @@ func (c *Config) validate() error {
 	c.validateSSHHosts(&errs)
 	c.validatePaths(&errs)
 	c.validateSSHPolicy(&errs)
+	c.validateExternalURLs(&errs)
+	c.validateWebhookTLS(&errs)
 	if c.Primary.Git.Mode == "" {
 		errs = append(errs, errors.New("primary.git.mode is required (rsync|fetch)"))
 	}
@@ -481,7 +491,10 @@ func (c *Config) validate() error {
 		c.Sync.LagCriticalThreshold = 5 * time.Minute
 	}
 	if c.Metrics.Addr == "" {
-		c.Metrics.Addr = ":9101"
+		// Loopback by default: /metrics has no auth and exposes site
+		// names, replication lag, and drift counters. Set an explicit
+		// addr to expose it, and scrape over a private network.
+		c.Metrics.Addr = "127.0.0.1:9101"
 	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
@@ -584,6 +597,58 @@ func (c *Config) validateSSHPolicy(errs *[]error) {
 		log.Warn().Msg("ssh.strict_host_key_checking is 'no' — host-key verification is disabled and every SSH connection is open to machine-in-the-middle interception")
 	case "accept-new":
 		log.Warn().Msg("ssh host keys are not pinned (trust-on-first-use); set ssh.known_hosts_file to verify them")
+	}
+}
+
+// validateExternalURLs requires each external_url to parse and to use
+// http or https, and warns on http. The API validator sends a GitLab
+// personal access token in a PRIVATE-TOKEN header against these URLs,
+// and the registry reconciler derives its endpoint from them, so the
+// scheme decides whether those credentials cross the network in the
+// clear.
+func (c *Config) validateExternalURLs(errs *[]error) {
+	check := func(label, raw string) {
+		if raw == "" {
+			return
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			*errs = append(*errs, fmt.Errorf("%s.external_url %q is not a valid URL: %w", label, raw, err))
+			return
+		}
+		switch u.Scheme {
+		case "https":
+		case "http":
+			log.Warn().Str("site", label).Str("url", raw).
+				Msg("external_url uses http — API tokens and registry requests will cross the network in cleartext; use https")
+		default:
+			*errs = append(*errs, fmt.Errorf(
+				"%s.external_url %q must use http or https, got scheme %q", label, raw, u.Scheme))
+			return
+		}
+		if u.Host == "" {
+			*errs = append(*errs, fmt.Errorf("%s.external_url %q has no host", label, raw))
+		}
+	}
+	check("primary", c.Primary.ExternalURL)
+	for i, s := range c.Secondaries {
+		check(fmt.Sprintf("secondaries[%d]", i), s.ExternalURL)
+	}
+}
+
+// validateWebhookTLS requires the cert and key to be set together, and
+// warns when the receiver serves plaintext.
+func (c *Config) validateWebhookTLS(errs *[]error) {
+	if c.Webhook == nil {
+		return
+	}
+	switch {
+	case c.Webhook.TLSCert != "" && c.Webhook.TLSKey == "":
+		*errs = append(*errs, errors.New("webhook.tls_cert is set but webhook.tls_key is not"))
+	case c.Webhook.TLSKey != "" && c.Webhook.TLSCert == "":
+		*errs = append(*errs, errors.New("webhook.tls_key is set but webhook.tls_cert is not"))
+	case c.Webhook.TLSCert == "" && c.Webhook.TLSKey == "":
+		log.Warn().Msg("webhook receiver is serving plaintext HTTP — the GitLab secret token is sent in a header on every delivery; set webhook.tls_cert/tls_key or front it with a TLS-terminating proxy")
 	}
 }
 

@@ -94,7 +94,10 @@ sync:
   consistency_sample_pct: 0.01
 
 metrics:
-  addr: ":9101"
+  # /metrics has no authentication and exposes site names, replication
+  # lag, and drift counters. It binds loopback by default; set an
+  # explicit host:port only if you scrape it over a trusted network.
+  addr: "127.0.0.1:9101"
 
 log:
   level: info
@@ -104,9 +107,14 @@ control_db: sqlite://data/syncctl.db
 
 # Optional: webhook receiver for immediate per-project sync on push/create/delete.
 # Export WEBHOOK_SECRET_TOKEN before starting syncctl.
+# GitLab sends the secret token in a header on every delivery, so serve
+# this over TLS — either with tls_cert/tls_key below, or behind a
+# TLS-terminating proxy.
 # webhook:
 #   addr: ":9102"
 #   secret_token: ${WEBHOOK_SECRET_TOKEN}
+#   tls_cert: /etc/syncctl/webhook.crt
+#   tls_key: /etc/syncctl/webhook.key
 
 # Optional: API-driven observational validator (read-only, never writes).
 # Export PRIMARY_API_TOKEN and SECONDARY_API_TOKEN before starting syncctl.

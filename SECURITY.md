@@ -91,6 +91,44 @@ postgres:
   ssl_root_cert: /etc/ssl/certs/pg-ca.pem
 ```
 
+## Network exposure
+
+`syncctl` opens two listeners and makes outbound calls to each site's
+`external_url`. None of them authenticate beyond what is described here.
+
+| Listener | Default | Auth | Notes |
+|---|---|---|---|
+| `/metrics`, `/healthz` | `127.0.0.1:9101` | none | Exposes site names, replication lag, drift counters. Loopback by default; if you widen `metrics.addr`, scrape it over a private network. |
+| `/webhook`, `/healthz` | `webhook.addr` | GitLab secret token | Serve over TLS. |
+
+### Webhook receiver
+
+GitLab sends the shared secret in the `X-Gitlab-Token` header on **every**
+delivery. Over plain HTTP that token crosses the network in cleartext,
+and anyone who observes it can trigger syncs at will. Either terminate
+TLS in the receiver:
+
+```yaml
+webhook:
+  addr: ":9102"
+  secret_token: ${WEBHOOK_SECRET_TOKEN}
+  tls_cert: /etc/syncctl/webhook.crt
+  tls_key: /etc/syncctl/webhook.key
+```
+
+or put a TLS-terminating reverse proxy in front of it. Running the
+receiver on plaintext HTTP logs a warning at startup.
+
+The token is compared as a SHA-256 digest in constant time, so neither
+its value nor its length is observable from response timing.
+
+### external_url scheme
+
+The API validator sends a GitLab personal access token in a
+`PRIVATE-TOKEN` header to `<external_url>/api/v4/...`, and the registry
+reconciler derives its endpoint the same way. Use `https`. An `http`
+URL loads with a warning; any other scheme is rejected.
+
 ## No secrets in config files or logs
 
 All secrets are read from environment variables via `${VAR}` expansion.
