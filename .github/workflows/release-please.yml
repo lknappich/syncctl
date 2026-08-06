@@ -72,6 +72,10 @@ jobs:
       contents: write
       packages: write
       id-token: write
+      # Must cover everything release.yml declares: a reusable workflow
+      # cannot be granted more than its caller holds, and exceeding it is
+      # a startup failure rather than a step failure.
+      attestations: write
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
