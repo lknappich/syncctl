@@ -44,10 +44,11 @@ func main() {
 }
 
 type globalFlags struct {
-	configPath string
-	logLevel   string
-	logFormat  string
-	dryRun     bool
+	configPath          string
+	logLevel            string
+	logFormat           string
+	dryRun              bool
+	allowLiteralSecrets bool
 }
 
 func newRootCmd() *cobra.Command {
@@ -69,6 +70,8 @@ func newRootCmd() *cobra.Command {
 		"log format (json|text); overrides config")
 	root.PersistentFlags().BoolVar(&g.dryRun, "dry-run", false,
 		"print actions without performing them (where supported)")
+	root.PersistentFlags().BoolVar(&g.allowLiteralSecrets, "allow-literal-secrets", false,
+		"permit plaintext secrets in the config file instead of ${VAR} references (migration aid; warns on every load)")
 
 	root.AddCommand(
 		newVersionCmd(),
@@ -93,6 +96,7 @@ instances. It does NOT use GitLab's proprietary Geo feature; all
 replication is performed via documented Postgres/S3/git interfaces.`
 
 func loadConfig(g *globalFlags) (*config.Config, error) {
+	config.SetAllowLiteralSecrets(g.allowLiteralSecrets)
 	cfg, err := config.Load(g.configPath)
 	if err != nil {
 		return nil, err

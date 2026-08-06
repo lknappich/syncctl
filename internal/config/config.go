@@ -1,9 +1,9 @@
 // Package config defines the runtime configuration for syncctl.
 //
-// Configuration is loaded from a YAML file. All secret values SHOULD be
+// Configuration is loaded from a YAML file. All secret values MUST be
 // supplied via environment variables referenced by ${ENV_VAR} placeholders
-// in the YAML. A literal in a field tagged `env:"required"` is warned
-// about at load and will become an error in the next major version.
+// in the YAML; a literal in a field tagged `env:"required"` is rejected at
+// load unless --allow-literal-secrets is passed.
 package config
 
 import (
@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -284,7 +285,9 @@ func Load(path string) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	warnSecretsNotEnvRefs(&c)
+	if err := enforceSecretsAreEnvRefs(&c); err != nil {
+		return nil, err
+	}
 	if err := resolveEnvInStruct(&c); err != nil {
 		return nil, err
 	}
@@ -302,29 +305,52 @@ var envRefRe = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 // "prefix-${VAR}" would leave part of the secret in the file.
 var envRefOnlyRe = regexp.MustCompile(`^\$\{[A-Z_][A-Z0-9_]*\}$`)
 
-// warnSecretsNotEnvRefs reports every `env:"required"` field holding a
-// literal instead of a bare ${VAR} reference. It runs before
-// resolveEnvInStruct, while placeholders are still literal text.
-//
-// Without this the tag was documentation only, and a plaintext password
-// in the YAML was accepted in silence. It warns rather than rejects:
-// refusing to load would break a running deployment on upgrade, and for
-// a disaster-recovery tool an unstartable binary is its own incident.
-// The plan is to reject in the next major version — see SECURITY.md.
-func warnSecretsNotEnvRefs(c *Config) {
-	var errs []error
-	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
-	for _, err := range errs {
-		log.Warn().Msg(err.Error())
-	}
-	if len(errs) > 0 {
-		log.Warn().Int("fields", len(errs)).
-			Msg("secrets are stored as literals in the config file; move them to environment variables — this will become a load error in the next major version")
-	}
+// allowLiteralSecretsEnv opts out of the literal-secret rejection.
+// #nosec G101 -- an environment variable name, not a credential.
+const allowLiteralSecretsEnv = "SYNCCTL_ALLOW_LITERAL_SECRETS"
+
+// allowLiteralSecrets is set by the --allow-literal-secrets flag.
+var allowLiteralSecrets atomic.Bool
+
+// SetAllowLiteralSecrets permits plaintext secrets in the config file.
+// Intended for operators mid-migration; it warns on every load so the
+// state cannot be forgotten.
+func SetAllowLiteralSecrets(allow bool) { allowLiteralSecrets.Store(allow) }
+
+func literalSecretsAllowed() bool {
+	return allowLiteralSecrets.Load() || os.Getenv(allowLiteralSecretsEnv) == "1"
 }
 
-// CheckSecretsAreEnvRefs reports literal secrets as an error, for callers
-// that want to enforce rather than warn (config-validate --strict).
+// enforceSecretsAreEnvRefs rejects a config carrying plaintext secrets.
+//
+// Through 0.2.x this only warned, so that configs written before the tag
+// was enforced kept loading, and the warning said rejection would land in
+// the next major version. This is that version.
+//
+// The escape hatch exists because an upgrade that leaves an operator
+// with no way forward at 3am is its own incident: --allow-literal-secrets
+// restores the warning, loudly, for as long as a migration needs.
+func enforceSecretsAreEnvRefs(c *Config) error {
+	var errs []error
+	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
+	if len(errs) == 0 {
+		return nil
+	}
+	if literalSecretsAllowed() {
+		for _, err := range errs {
+			log.Warn().Msg(err.Error())
+		}
+		log.Warn().Int("fields", len(errs)).
+			Msg("literal secrets permitted by --allow-literal-secrets; move them to environment variables — this override is not intended to be permanent")
+		return nil
+	}
+	return fmt.Errorf("%w\n\nMove these values to environment variables and reference them as ${VAR}, "+
+		"or pass --allow-literal-secrets (or %s=1) while you migrate",
+		errors.Join(errs...), allowLiteralSecretsEnv)
+}
+
+// CheckSecretsAreEnvRefs reports literal secrets without regard to the
+// --allow-literal-secrets override, for callers that want to audit.
 func CheckSecretsAreEnvRefs(c *Config) error {
 	var errs []error
 	walkSecretFields(reflect.ValueOf(c).Elem(), "", &errs)
@@ -522,7 +548,10 @@ func (c *Config) validate() error {
 		c.Sync.LagCriticalThreshold = 5 * time.Minute
 	}
 	if c.Metrics.Addr == "" {
-		c.Metrics.Addr = ":9101"
+		// Loopback by default as of 1.0: /metrics has no authentication
+		// and exposes site names, replication lag and drift counters.
+		// Set an explicit addr to widen it deliberately.
+		c.Metrics.Addr = "127.0.0.1:9101"
 	}
 	c.warnMetricsExposed()
 	if c.Log.Level == "" {
