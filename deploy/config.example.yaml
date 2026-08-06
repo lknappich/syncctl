@@ -110,6 +110,10 @@ metrics:
 log:
   level: info
   format: json
+  # Replace project, group and repository paths in log lines with a
+  # stable short hash. Turn this on if project names are confidential or
+  # your logs leave your infrastructure — see PRIVACY.md.
+  redact_project_paths: false
 
 # Optional: webhook receiver for immediate per-project sync on push/create/delete.
 # Export WEBHOOK_SECRET_TOKEN before starting syncctl.

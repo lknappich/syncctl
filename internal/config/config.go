@@ -188,6 +188,13 @@ type MetricsConfig struct {
 type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
+
+	// RedactProjectPaths replaces project, group and repository paths in
+	// log lines with a stable short hash. Group and project names are
+	// frequently confidential in themselves, and logs are routinely
+	// shipped to third-party aggregators. Failures stay correlatable
+	// across lines; the names do not leave your infrastructure.
+	RedactProjectPaths bool `yaml:"redact_project_paths,omitempty"`
 }
 
 // WebhookConfig enables the webhook receiver that triggers immediate

@@ -105,7 +105,7 @@ func loadConfig(g *globalFlags) (*config.Config, error) {
 	if fmt == "" {
 		fmt = cfg.Log.Format
 	}
-	logging.Configure(lvl, fmt)
+	logging.ConfigureWith(lvl, fmt, cfg.Log.RedactProjectPaths)
 	return cfg, nil
 }
 

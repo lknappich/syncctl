@@ -23,6 +23,12 @@ const (
 // level: "trace"|"debug"|"info"|"warn"|"error" (case-insensitive).
 // format: "json"|"text".
 func Configure(level, format string) zerolog.Logger {
+	return ConfigureWith(level, format, RedactProjectPathsEnabled())
+}
+
+// ConfigureWith is Configure plus the project-path redaction setting.
+func ConfigureWith(level, format string, redactProjectPaths bool) zerolog.Logger {
+	SetRedactProjectPaths(redactProjectPaths)
 	// Defaults: JSON to stderr, info level.
 	zerolog.TimeFieldFormat = time.RFC3339Nano
 	zerolog.SetGlobalLevel(parseLevel(level))

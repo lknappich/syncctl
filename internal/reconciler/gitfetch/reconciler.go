@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/lknappich/syncctl/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/logging"
 	"github.com/lknappich/syncctl/internal/metrics"
 	"github.com/lknappich/syncctl/internal/projectpath"
 	"github.com/lknappich/syncctl/internal/reconciler"
@@ -200,7 +201,7 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 			// One malformed row must not stop replicating everything
 			// else; skip it and say which project was skipped.
 			log.Warn().Err(err).Int32("project_id", p.ID).
-				Str("route_path", routePath.String).
+				Str("route_path", logging.ProjectPath(routePath.String)).
 				Msg("skipping project with an unusable repository path")
 			continue
 		}
@@ -294,7 +295,8 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 
 	localPath, err := containedJoin(r.reposPath, p.RepoPath)
 	if err != nil {
-		log.Warn().Err(err).Int32("project_id", p.ID).Str("repo", p.RepoPath).
+		log.Warn().Err(err).Int32("project_id", p.ID).
+			Str("repo", logging.ProjectPath(p.RepoPath)).
 			Msg("refusing to fetch outside the repositories root")
 		return false
 	}
@@ -318,9 +320,12 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 		[]string{"GIT_SSH_COMMAND=" + sshCmd})
 	if err != nil {
 		log.Warn().Err(err).Int32("project_id", p.ID).
-			Str("repo", p.RepoPath).
-			Str("output", strings.TrimSpace(string(out))).
+			Str("repo", logging.ProjectPath(p.RepoPath)).
+			Str("output", logging.CommandOutput(string(out))).
 			Msg("git fetch failed")
+		log.Debug().Int32("project_id", p.ID).
+			Str("output", strings.TrimSpace(string(out))).
+			Msg("git fetch output")
 		return false
 	}
 	return true
