@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
+	"github.com/lknappich/syncctl/internal/logging"
 	"github.com/lknappich/syncctl/internal/metrics"
 	"github.com/lknappich/syncctl/internal/reconciler"
 )
@@ -234,9 +235,11 @@ func (r *Reconciler) sampleGitFsck(ctx context.Context) int {
 func gitFsck(ctx context.Context, repoPath string) bool {
 	out, err := execGitFsck(ctx, repoPath)
 	if err != nil {
-		log.Warn().Err(err).Str("repo", repoPath).
-			Str("output", strings.TrimSpace(out)).
+		log.Warn().Err(err).Str("repo", logging.ProjectPath(repoPath)).
+			Str("output", logging.CommandOutput(out)).
 			Msg("git fsck failed")
+		log.Debug().Str("repo", repoPath).Str("output", strings.TrimSpace(out)).
+			Msg("git fsck output")
 		return false
 	}
 	return true

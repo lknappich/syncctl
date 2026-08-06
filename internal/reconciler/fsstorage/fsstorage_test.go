@@ -3,6 +3,7 @@ package fsstorage
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -196,4 +197,17 @@ type fsMockRunner struct {
 
 func (m *fsMockRunner) Run(ctx context.Context, name string, args, env []string) ([]byte, error) {
 	return m.out, m.err
+}
+
+// Metric labels are scraped continuously and often shipped to a
+// third-party vendor, so no path may become one. The path belongs in the
+// log line that accompanies the drift.
+func TestMetricLabelsCarryNoFilesystemPath(t *testing.T) {
+	src, err := os.ReadFile("reconciler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), `WithLabelValues(r.Name()+":"+pair.Src`) {
+		t.Error("filesystem path is being used as a Prometheus label value")
+	}
 }

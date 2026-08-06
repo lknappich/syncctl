@@ -18,6 +18,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/lknappich/syncctl/internal/logging"
 	"github.com/lknappich/syncctl/internal/metrics"
 	"github.com/lknappich/syncctl/internal/projectpath"
 )
@@ -137,7 +138,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := projectpath.Validate(projectPath); err != nil {
-		log.Warn().Err(err).Str("project", projectPath).Str("event", eventType).
+		log.Warn().Err(err).Str("project", logging.ProjectPath(projectPath)).Str("event", eventType).
 			Msg("webhook: invalid project path")
 		metrics.DriftTotal.WithLabelValues("webhook", "warning").Inc()
 		w.WriteHeader(http.StatusOK)
@@ -166,7 +167,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		start := time.Now()
 		if err := s.trigger(ctx, projectPath, eventType); err != nil {
-			log.Error().Err(err).Str("project", projectPath).Str("event", eventType).
+			log.Error().Err(err).Str("project", logging.ProjectPath(projectPath)).Str("event", eventType).
 				Msg("webhook-triggered sync failed")
 			metrics.SyncDurationSeconds.WithLabelValues("webhook_trigger", "error").
 				Observe(time.Since(start).Seconds())
@@ -176,7 +177,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, req *http.Request) {
 			Observe(time.Since(start).Seconds())
 		metrics.LastSyncTimestamp.WithLabelValues("webhook_trigger").
 			Set(float64(time.Now().Unix()))
-		log.Info().Str("project", projectPath).Str("event", eventType).
+		log.Debug().Str("project", logging.ProjectPath(projectPath)).Str("event", eventType).
 			Msg("webhook-triggered sync complete")
 	}()
 

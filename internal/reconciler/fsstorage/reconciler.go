@@ -14,6 +14,7 @@ import (
 
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/localcmd"
+	"github.com/lknappich/syncctl/internal/logging"
 	"github.com/lknappich/syncctl/internal/metrics"
 	"github.com/lknappich/syncctl/internal/reconciler"
 	"github.com/lknappich/syncctl/internal/sshexec"
@@ -103,7 +104,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 			metrics.DriftTotal.WithLabelValues(name+":"+pair.Src, "warning").Inc()
 		default:
 			failed++
-			metrics.DriftTotal.WithLabelValues(r.Name()+":"+pair.Src, "critical").Inc()
+			metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		}
 	}
 
@@ -172,7 +173,7 @@ func (r *Reconciler) rsyncPath(ctx context.Context, pair PathPair) error {
 			// while replicating three. Not fatal — some GitLab installs
 			// legitimately lack e.g. an lfs-objects directory — but it
 			// must be visible and must not count as work done.
-			log.Warn().Str("path", pair.Src).Str("output", errStr).
+			log.Warn().Str("path", pair.Src).Str("output", logging.CommandOutput(errStr)).
 				Msg("fs_paths entry does not exist on the primary; skipped")
 			return errPathMissing
 		}
