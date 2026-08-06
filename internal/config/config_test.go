@@ -727,3 +727,32 @@ func TestValidatePaths(t *testing.T) {
 		})
 	}
 }
+func TestValidateSSHPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		ssh     SSHConfig
+		wantErr bool
+	}{
+		{name: "unset", ssh: SSHConfig{}},
+		{name: "yes", ssh: SSHConfig{StrictHostKeyChecking: "yes"}},
+		{name: "no", ssh: SSHConfig{StrictHostKeyChecking: "no"}},
+		{name: "accept-new", ssh: SSHConfig{StrictHostKeyChecking: "accept-new"}},
+		{name: "known_hosts implies yes", ssh: SSHConfig{KnownHostsFile: "/etc/known_hosts"}},
+		{name: "typo", ssh: SSHConfig{StrictHostKeyChecking: "ture"}, wantErr: true},
+		{name: "shell-ish", ssh: SSHConfig{StrictHostKeyChecking: "yes -o ProxyCommand=x"}, wantErr: true},
+		{name: "wrong case", ssh: SSHConfig{StrictHostKeyChecking: "Yes"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{SSH: tc.ssh}
+			var errs []error
+			c.validateSSHPolicy(&errs)
+			if tc.wantErr && len(errs) == 0 {
+				t.Error("expected a validation error")
+			}
+			if !tc.wantErr && len(errs) != 0 {
+				t.Errorf("unexpected errors: %v", errs)
+			}
+		})
+	}
+}

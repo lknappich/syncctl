@@ -437,6 +437,7 @@ func (c *Config) validate() error {
 	c.warnInsecureSSL(&errs)
 	c.validateSSHHosts(&errs)
 	c.validatePaths(&errs)
+	c.validateSSHPolicy(&errs)
 	if c.Primary.Git.Mode == "" {
 		errs = append(errs, errors.New("primary.git.mode is required (rsync|fetch)"))
 	}
@@ -557,6 +558,30 @@ func (c *Config) validatePaths(errs *[]error) {
 	checkSite("primary", &c.Primary)
 	for i := range c.Secondaries {
 		checkSite(fmt.Sprintf("secondaries[%d]", i), &c.Secondaries[i])
+	}
+}
+
+// validateSSHPolicy rejects an unrecognised strict_host_key_checking
+// value and warns when the effective policy leaves connections open to
+// MITM. The value is passed straight to `ssh -o`, so a typo would
+// otherwise fail every connection with an ssh error rather than a config
+// error, and "no" would silently disable host-key verification for the
+// SSH sessions that carry sudo commands and read db_key_base.
+func (c *Config) validateSSHPolicy(errs *[]error) {
+	switch c.SSH.StrictHostKeyChecking {
+	case "", "yes", "no", "accept-new":
+	default:
+		*errs = append(*errs, fmt.Errorf(
+			"ssh.strict_host_key_checking %q invalid; want yes, no, or accept-new",
+			c.SSH.StrictHostKeyChecking))
+		return
+	}
+
+	switch c.SSHExecConfig().EffectiveStrictHostKeyChecking() {
+	case "no":
+		log.Warn().Msg("ssh.strict_host_key_checking is 'no' — host-key verification is disabled and every SSH connection is open to machine-in-the-middle interception")
+	case "accept-new":
+		log.Warn().Msg("ssh host keys are not pinned (trust-on-first-use); set ssh.known_hosts_file to verify them")
 	}
 }
 
