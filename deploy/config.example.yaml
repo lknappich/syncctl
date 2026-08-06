@@ -143,3 +143,7 @@ log:
 #     zone_id: "Z123EXAMPLE"
 #     record_name: "gitlab.primary.example.com"
 #   auto_failover: false  # DANGEROUS: if true, fails over without human gate
+#   # Which secondary auto-failover promotes. Optional with exactly one
+#   # secondary; required with several — syncctl will not choose between
+#   # replicas by config-file ordering.
+#   promote_secondary: secondary-us

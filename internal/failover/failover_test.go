@@ -322,7 +322,7 @@ func TestAdoptAsSecondaryRejectsWhenDisabled(t *testing.T) {
 		Sync: config.SyncConfig{FailoverEnabled: false},
 	}
 	fc := New(cfg, false)
-	err := fc.AdoptAsSecondary(context.Background(), "old-primary:22")
+	err := fc.AdoptAsSecondary(context.Background(), "old-primary:22", "")
 	if err == nil {
 		t.Fatal("expected error when failover disabled")
 	}
@@ -340,7 +340,7 @@ func TestAdoptAsSecondaryDryRun(t *testing.T) {
 		Sync: config.SyncConfig{FailoverEnabled: false},
 	}
 	fc := New(cfg, true)
-	err := fc.AdoptAsSecondary(context.Background(), "old-primary:22")
+	err := fc.AdoptAsSecondary(context.Background(), "old-primary:22", "")
 	if err != nil {
 		t.Fatalf("dry-run AdoptAsSecondary should succeed: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestAdoptAsSecondaryRejectsUnknownSecondary(t *testing.T) {
 	}
 	fc := New(cfg, true)
 	// With failover enabled and dry-run, should succeed.
-	err := fc.AdoptAsSecondary(context.Background(), "old:22")
+	err := fc.AdoptAsSecondary(context.Background(), "old:22", "")
 	if err != nil {
 		t.Fatalf("dry-run with failover enabled should succeed: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestAdoptAsSecondaryRequiresASecondary(t *testing.T) {
 		Sync:    config.SyncConfig{FailoverEnabled: true},
 	}
 	fc := New(cfg, false)
-	err := fc.AdoptAsSecondary(context.Background(), "old:22")
+	err := fc.AdoptAsSecondary(context.Background(), "old:22", "")
 	if err == nil {
 		t.Fatal("expected an error rather than an index-out-of-range panic")
 	}
@@ -472,4 +472,81 @@ func indexOf(ss []string, want string) int {
 		}
 	}
 	return -1
+}
+func TestAutoFailoverTargetRequiresAnExplicitChoice(t *testing.T) {
+	two := []config.SiteConfig{{Name: "secondary-us"}, {Name: "secondary-eu"}}
+
+	t.Run("single secondary defaults", func(t *testing.T) {
+		fc := New(&config.Config{Secondaries: []config.SiteConfig{{Name: "only"}}}, true)
+		got, err := fc.autoFailoverTarget()
+		if err != nil || got != "only" {
+			t.Errorf("got (%q, %v), want (only, nil)", got, err)
+		}
+	})
+
+	t.Run("multiple secondaries refuse", func(t *testing.T) {
+		fc := New(&config.Config{Secondaries: two}, true)
+		if got, err := fc.autoFailoverTarget(); err == nil {
+			t.Errorf("expected a refusal, got %q — config order must not decide this", got)
+		}
+	})
+
+	t.Run("multiple secondaries with explicit choice", func(t *testing.T) {
+		fc := New(&config.Config{
+			Secondaries: two,
+			Failover:    &config.FailoverConfig{PromoteSecondary: "secondary-eu"},
+		}, true)
+		got, err := fc.autoFailoverTarget()
+		if err != nil || got != "secondary-eu" {
+			t.Errorf("got (%q, %v), want (secondary-eu, nil)", got, err)
+		}
+	})
+
+	t.Run("unknown name is an error", func(t *testing.T) {
+		fc := New(&config.Config{
+			Secondaries: two,
+			Failover:    &config.FailoverConfig{PromoteSecondary: "typo"},
+		}, true)
+		if _, err := fc.autoFailoverTarget(); err == nil {
+			t.Error("an unknown secondary name must not silently fall through")
+		}
+	})
+}
+
+// Re-basing the old primary from the wrong site replicates a stale
+// replica over it — and with --wipe-pgdata, after deleting its cluster.
+func TestResolveNewPrimaryRequiresAnExplicitChoice(t *testing.T) {
+	two := []config.SiteConfig{{Name: "secondary-us"}, {Name: "secondary-eu"}}
+
+	fc := New(&config.Config{Secondaries: []config.SiteConfig{{Name: "only"}}}, true)
+	if got, err := fc.ResolveNewPrimary(""); err != nil || got.Name != "only" {
+		t.Errorf("single secondary should default, got (%v, %v)", got, err)
+	}
+
+	fc = New(&config.Config{Secondaries: two}, true)
+	if _, err := fc.ResolveNewPrimary(""); err == nil {
+		t.Error("expected a refusal with two secondaries and no --new-primary")
+	}
+	got, err := fc.ResolveNewPrimary("secondary-eu")
+	if err != nil || got.Name != "secondary-eu" {
+		t.Errorf("explicit name should resolve, got (%v, %v)", got, err)
+	}
+	if _, err := fc.ResolveNewPrimary("typo"); err == nil {
+		t.Error("an unknown secondary name must be an error")
+	}
+}
+
+func TestAdoptAsSecondaryRefusesAmbiguousNewPrimary(t *testing.T) {
+	fc := New(&config.Config{
+		Primary:     config.SiteConfig{Name: "p"},
+		Secondaries: []config.SiteConfig{{Name: "a"}, {Name: "b"}},
+		Sync:        config.SyncConfig{FailoverEnabled: true},
+	}, false)
+	err := fc.AdoptAsSecondary(context.Background(), "old:22", "")
+	if err == nil {
+		t.Fatal("expected a refusal rather than silently re-basing from Secondaries[0]")
+	}
+	if !strings.Contains(err.Error(), "--new-primary") {
+		t.Errorf("error should name the flag, got: %v", err)
+	}
 }

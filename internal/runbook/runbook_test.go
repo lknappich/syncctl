@@ -155,3 +155,30 @@ func TestGeneratedFailoverCommandCarriesYes(t *testing.T) {
 		t.Error("runbook should tell the operator how to clear the old primary's PGDATA")
 	}
 }
+func TestRunbookEmitsNewPrimaryFlagWhenAmbiguous(t *testing.T) {
+	multi := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com", SSHHost: "p:22"},
+		Secondaries: []config.SiteConfig{{Name: "secondary-us"}, {Name: "secondary-eu"}},
+		Sync:        config.SyncConfig{SweepInterval: time.Minute},
+	}
+	var buf bytes.Buffer
+	if err := Generate(&buf, multi); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(buf.String(), "--new-primary") {
+		t.Errorf("runbook must print --new-primary with several secondaries:\n%s", buf.String())
+	}
+
+	single := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com", SSHHost: "p:22"},
+		Secondaries: []config.SiteConfig{{Name: "only"}},
+		Sync:        config.SyncConfig{SweepInterval: time.Minute},
+	}
+	buf.Reset()
+	if err := Generate(&buf, single); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(buf.String(), "--new-primary") {
+		t.Error("with one secondary the flag is noise; it should be omitted")
+	}
+}

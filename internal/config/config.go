@@ -233,6 +233,12 @@ type FailoverConfig struct {
 	// AutoFailover: if true, failover triggers automatically when quorum
 	// is reached. DANGEROUS — default false (human-gated).
 	AutoFailover bool `yaml:"auto_failover,omitempty"`
+
+	// PromoteSecondary names the secondary auto-failover promotes. With
+	// exactly one secondary configured it may be left unset. With
+	// several it is required: choosing which replica becomes the primary
+	// by config-file ordering is not a decision the tool should make.
+	PromoteSecondary string `yaml:"promote_secondary,omitempty"`
 }
 
 // SSHConfig controls SSH host-key verification policy for all SSH-based
