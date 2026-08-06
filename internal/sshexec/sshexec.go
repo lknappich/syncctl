@@ -186,6 +186,9 @@ func (c Config) Command(ctx context.Context, host, remoteCmd string) (*exec.Cmd,
 		return nil, err
 	}
 	args := append(c.argsFor(ep), ep.Destination(), remoteCmd)
+	// #nosec G204 -- argv vector, not a shell string. remoteCmd is parsed
+	// by the *remote* shell; its interpolated values are quoted by
+	// internal/shellquote at the call sites that build it.
 	return exec.CommandContext(ctx, "ssh", args...), nil
 }
 

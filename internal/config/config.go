@@ -229,6 +229,8 @@ type SSHConfig struct {
 // treated as opaque strings (never re-parsed as YAML), preventing
 // injection of additional keys via newlines or YAML metacharacters.
 func Load(path string) (*Config, error) {
+	// #nosec G304 -- reading the operator's config file from the path
+	// they passed to -c is this function's entire purpose.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
