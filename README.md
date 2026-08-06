@@ -115,7 +115,7 @@ syncctl serve -c config.yaml
 | `syncctl failover` | Promote a secondary to primary (human-gated) |
 | `syncctl adopt-as-secondary` | Role-swap old primary to secondary |
 | `syncctl runbook` | Generate operational runbook from config |
-| `syncctl sla` | Print RPO/RTO summary from metrics |
+| `syncctl sla` | Print RPO/RTO summary scraped from a running `syncctl serve` |
 | `syncctl serve` | Run sync engine (reconcilers + metrics + webhook + failover) |
 
 ## Security

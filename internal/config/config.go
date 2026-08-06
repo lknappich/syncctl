@@ -123,6 +123,18 @@ type S3Config struct {
 // RegistryConfig describes the container registry backing.
 type RegistryConfig struct {
 	Mode string `yaml:"mode"` // "s3" | "fs"
+
+	// URL is the container registry's own base URL, e.g.
+	// https://registry.example.com or https://gitlab.example.com:5050.
+	// The registry is a separate service from GitLab, so this cannot be
+	// derived from external_url. When unset, the registry reconciler is
+	// not run at all rather than probing the wrong host.
+	URL string `yaml:"url,omitempty"`
+
+	// Token is an optional bearer token for registries that do not use
+	// the standard auth-realm challenge flow. Env-only.
+	Token string `yaml:"token,omitempty" env:"required"`
+
 	// FSPath is the registry filesystem root (mode=fs).
 	FSPath string `yaml:"fs_path,omitempty"`
 	// S3 follows the same S3Config pattern (registry may share or differ
