@@ -194,3 +194,12 @@ func TestReconcileRejectsMalformedSSHHost(t *testing.T) {
 		t.Errorf("rsync should not run with a malformed ssh_host, got %d calls", len(runner.calls))
 	}
 }
+
+func TestNameIsQualifiedBySecondary(t *testing.T) {
+	r := New(&config.SiteConfig{SSHHost: "p"},
+		&config.SiteConfig{Name: "secondary-us"}, false, sshexec.Config{})
+	if got := r.Name(); got != "git_rsync@secondary-us" {
+		t.Errorf("Name() = %q, want git_rsync@secondary-us — metrics and logs must "+
+			"distinguish one secondary from another", got)
+	}
+}

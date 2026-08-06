@@ -31,6 +31,7 @@ const name = "registry"
 // Reconciler compares registry contents between primary and secondary
 // via the Docker Registry HTTP API v2.
 type Reconciler struct {
+	site            string
 	primaryURL      string
 	secondaryURL    string
 	primaryClient   *http.Client
@@ -45,6 +46,7 @@ func New(primary, secondary *config.SiteConfig, dryRun bool) *Reconciler {
 
 	timeout := 30 * time.Second
 	return &Reconciler{
+		site:            secondary.Name,
 		primaryURL:      primaryURL,
 		secondaryURL:    secondaryURL,
 		primaryClient:   &http.Client{Timeout: timeout},
@@ -53,7 +55,7 @@ func New(primary, secondary *config.SiteConfig, dryRun bool) *Reconciler {
 	}
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.site) }
 
 // Reconcile lists all repositories on both sides, then compares manifest
 // digests for each repository.
@@ -65,7 +67,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		if isAuthError(err) {
 			return reconciler.Result{OK: true, Detail: "registry: primary requires auth (skipped — configure a token to enable)"}
 		}
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{OK: false, Detail: fmt.Sprintf("primary list repos: %v", err), Remaining: 1}
 	}
 
@@ -74,7 +76,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		if isAuthError(err) {
 			return reconciler.Result{OK: true, Detail: "registry: secondary requires auth (skipped — configure a token to enable)"}
 		}
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{OK: false, Detail: fmt.Sprintf("secondary list repos: %v", err), Remaining: 1}
 	}
 
@@ -103,22 +105,22 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 			}
 		}
 		elapsed := time.Since(start)
-		metrics.SyncDurationSeconds.WithLabelValues(name, "ok").Observe(elapsed.Seconds())
+		metrics.SyncDurationSeconds.WithLabelValues(r.Name(), "ok").Observe(elapsed.Seconds())
 		if driftRepos > 0 {
-			metrics.DriftTotal.WithLabelValues(name, "warning").Inc()
+			metrics.DriftTotal.WithLabelValues(r.Name(), "warning").Inc()
 			return reconciler.Result{
 				OK:        false,
 				Detail:    fmt.Sprintf("%d/%d repos have manifest drift", driftRepos, len(pSet)),
 				Remaining: driftRepos,
 			}
 		}
-		metrics.LastSyncTimestamp.WithLabelValues(name).Set(float64(time.Now().Unix()))
+		metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
 		return reconciler.Result{OK: true, Detail: fmt.Sprintf("registry in sync: %d repos", len(pSet))}
 	}
 
 	elapsed := time.Since(start)
-	metrics.SyncDurationSeconds.WithLabelValues(name, "error").Observe(elapsed.Seconds())
-	metrics.DriftTotal.WithLabelValues(name, "warning").Inc()
+	metrics.SyncDurationSeconds.WithLabelValues(r.Name(), "error").Observe(elapsed.Seconds())
+	metrics.DriftTotal.WithLabelValues(r.Name(), "warning").Inc()
 	return reconciler.Result{
 		OK:        false,
 		Detail:    fmt.Sprintf("repo list drift: %d missing, %d extra on secondary", len(missing), len(extra)),

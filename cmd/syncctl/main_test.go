@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/lknappich/syncctl/internal/config"
+	pgreconciler "github.com/lknappich/syncctl/internal/reconciler/postgres"
 )
 
 func TestVersionCmd(t *testing.T) {
@@ -164,4 +166,61 @@ func TestFindSecondaryNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown secondary")
 	}
+}
+
+// buildSiteReconcilers is the unit that must run once per secondary.
+// Previously buildReconcilers used Secondaries[0] only, so every replica
+// after the first received no git, object storage, registry, consistency
+// or API reconciler at all — and nothing said so.
+func TestBuildSiteReconcilersCoversEachSecondary(t *testing.T) {
+	cfg := &config.Config{
+		Primary: config.SiteConfig{
+			Name:        "primary",
+			ExternalURL: "https://p.example.com",
+			SSHHost:     "p.example.com",
+			Git:         config.GitStorage{Mode: "rsync", ReposPath: "/repos"},
+			ObjectStore: config.ObjectStoreConfig{Backend: "fs", FSPaths: []string{"/uploads"}},
+		},
+		Secondaries: []config.SiteConfig{
+			{Name: "secondary-us", ExternalURL: "https://us.example.com", Git: config.GitStorage{ReposPath: "/repos"}},
+			{Name: "secondary-eu", ExternalURL: "https://eu.example.com", Git: config.GitStorage{ReposPath: "/repos"}},
+		},
+	}
+
+	seen := map[string]bool{}
+	for i := range cfg.Secondaries {
+		recs, err := buildSiteReconcilers(t.Context(), cfg, &cfg.Secondaries[i], &pgreconciler.Reconciler{}, true)
+		if err != nil {
+			t.Fatalf("buildSiteReconcilers[%d]: %v", i, err)
+		}
+		if len(recs) == 0 {
+			t.Fatalf("secondary %q got no reconcilers", cfg.Secondaries[i].Name)
+		}
+		for _, r := range recs {
+			if seen[r.Name()] {
+				t.Errorf("duplicate reconciler name %q — metrics from two "+
+					"secondaries would collide on the component label", r.Name())
+			}
+			seen[r.Name()] = true
+		}
+	}
+
+	for _, want := range []string{
+		"git_rsync@secondary-us", "git_rsync@secondary-eu",
+		"fs_storage@secondary-us", "fs_storage@secondary-eu",
+		"consistency_sweep@secondary-us", "consistency_sweep@secondary-eu",
+	} {
+		if !seen[want] {
+			t.Errorf("missing reconciler %q; got %v", want, keys(seen))
+		}
+	}
+}
+
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

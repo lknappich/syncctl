@@ -19,7 +19,7 @@ func TestNewBuildsURLs(t *testing.T) {
 			SecondaryToken: "tok2",
 		},
 	}
-	r := New(cfg)
+	r := New(cfg, &cfg.Secondaries[0])
 	if r.primaryURL != "https://gitlab.primary.example.com/api/v4" {
 		t.Errorf("primaryURL = %q", r.primaryURL)
 	}

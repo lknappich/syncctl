@@ -38,6 +38,7 @@ func (a *listerAdapter) stats(ctx context.Context) (int64, int64, error) {
 
 // Reconciler verifies S3 bucket parity between primary and replica.
 type Reconciler struct {
+	site         string
 	primary      bucketLister
 	replica      bucketLister
 	lagThreshold time.Duration
@@ -48,7 +49,7 @@ type Reconciler struct {
 // secondary's S3 config (which may use a different region/endpoint/creds).
 // If the secondary has no S3 config, the primary's config is reused for
 // both (same-region setup).
-func New(ctx context.Context, primary, secondary *config.S3Config) (*Reconciler, error) {
+func New(ctx context.Context, site string, primary, secondary *config.S3Config) (*Reconciler, error) {
 	if primary == nil {
 		return nil, fmt.Errorf("primary.object_storage.s3 is required for s3 backend")
 	}
@@ -65,6 +66,7 @@ func New(ctx context.Context, primary, secondary *config.S3Config) (*Reconciler,
 		return nil, fmt.Errorf("replica s3 client: %w", err)
 	}
 	return &Reconciler{
+		site:         site,
 		primary:      &listerAdapter{client: pClient, bucket: pBucket},
 		replica:      &listerAdapter{client: rClient, bucket: rBucket},
 		lagThreshold: primary.ReplicationLag,
@@ -94,7 +96,7 @@ func newS3Client(ctx context.Context, s3cfg *config.S3Config, bucket string) (*s
 	return s3.NewFromConfig(awsCfg, opts...), bucket, nil
 }
 
-func (r *Reconciler) Name() string { return name }
+func (r *Reconciler) Name() string { return reconciler.QualifyName(name, r.site) }
 
 // Reconcile lists objects in both buckets and compares count + total size.
 // If the replica is behind by more than lagThreshold, returns not-OK.
@@ -107,7 +109,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		return e
 	})
 	if err != nil {
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{OK: false, Detail: fmt.Sprintf("primary list: %v", err), Remaining: 1}
 	}
 	var rCount, rSize int64
@@ -117,14 +119,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 		return e
 	})
 	if err != nil {
-		metrics.DriftTotal.WithLabelValues(name, "critical").Inc()
+		metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 		return reconciler.Result{OK: false, Detail: fmt.Sprintf("replica list: %v", err), Remaining: 1}
 	}
 	elapsed := time.Since(start)
-	metrics.SyncDurationSeconds.WithLabelValues(name, "ok").Observe(elapsed.Seconds())
+	metrics.SyncDurationSeconds.WithLabelValues(r.Name(), "ok").Observe(elapsed.Seconds())
 
 	if pCount == rCount && pSize == rSize {
-		metrics.LastSyncTimestamp.WithLabelValues(name).Set(float64(time.Now().Unix()))
+		metrics.LastSyncTimestamp.WithLabelValues(r.Name()).Set(float64(time.Now().Unix()))
 		return reconciler.Result{OK: true, Detail: fmt.Sprintf("buckets match: %d objects, %d bytes", pCount, pSize)}
 	}
 	delta := pCount - rCount
@@ -132,7 +134,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	if remaining < 0 {
 		remaining = -remaining
 	}
-	metrics.DriftTotal.WithLabelValues(name, "warning").Inc()
+	metrics.DriftTotal.WithLabelValues(r.Name(), "warning").Inc()
 	return reconciler.Result{
 		OK:        false,
 		Detail:    fmt.Sprintf("drift: primary=%d/%d replica=%d/%d (delta=%d)", pCount, pSize, rCount, rSize, delta),
