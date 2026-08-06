@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -31,6 +32,16 @@ type Endpoint struct {
 	Host string
 	Port string
 }
+
+// validHostRe is a conservative hostname/address charset: letters,
+// digits, dot, hyphen, underscore, and the colon and percent an IPv6
+// literal with a zone ID needs. Real hosts fit; quotes, spaces and shell
+// metacharacters do not, and a host is the one field that reaches an
+// ssh:// URL, an rsync target and an argv element alike.
+var validHostRe = regexp.MustCompile(`^[A-Za-z0-9._:%-]+$`)
+
+// validUserRe mirrors it for the login name.
+var validUserRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ParseEndpoint splits "[user@]host[:port]" into its parts. Bare IPv6
 // literals are accepted unbracketed ("::1"); to give an IPv6 address a
@@ -59,6 +70,22 @@ func ParseEndpoint(raw string) (Endpoint, error) {
 	}
 	if host == "" {
 		return Endpoint{}, fmt.Errorf("ssh_host %q has an empty host", raw)
+	}
+	// A destination beginning with "-" is read by ssh and rsync as an
+	// option rather than a host, so "-oProxyCommand=..." executes a
+	// command instead of connecting. Quoting cannot help — the value is
+	// an argument, not part of a command string — so it is refused here.
+	if strings.HasPrefix(host, "-") {
+		return Endpoint{}, fmt.Errorf("ssh_host %q: host must not begin with '-' (ssh would read it as an option)", raw)
+	}
+	if strings.HasPrefix(ep.User, "-") {
+		return Endpoint{}, fmt.Errorf("ssh_host %q: user must not begin with '-' (ssh would read it as an option)", raw)
+	}
+	if !validHostRe.MatchString(host) {
+		return Endpoint{}, fmt.Errorf("ssh_host %q: host contains characters that are not valid in a hostname or address", raw)
+	}
+	if ep.User != "" && !validUserRe.MatchString(ep.User) {
+		return Endpoint{}, fmt.Errorf("ssh_host %q: user contains characters that are not valid in a login name", raw)
 	}
 	ep.Host, ep.Port = host, port
 	return ep, nil

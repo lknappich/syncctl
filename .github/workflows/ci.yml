@@ -34,6 +34,11 @@ jobs:
             exit 1
           fi
       - run: go test -race ./...
+      # Fuzz targets run as ordinary tests here, exercising their seed
+      # corpora and any input previously found to fail. The long fuzzing
+      # runs happen out of band; this keeps the properties enforced.
+      - name: fuzz seed corpora
+        run: go test -run 'Fuzz' ./...
       - run: go test -coverprofile=coverage.txt ./... || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

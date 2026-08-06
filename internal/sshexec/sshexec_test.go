@@ -161,3 +161,38 @@ func TestCommandUsesBareHostAndPortFlag(t *testing.T) {
 		t.Errorf("port must not stay in the destination: %q", args)
 	}
 }
+
+// ssh and rsync read a destination beginning with "-" as an option, so
+// "-oProxyCommand=..." executes a command instead of connecting. Quoting
+// cannot help: the value is an argument, not part of a command string.
+func TestParseEndpointRejectsFlagLikeDestinations(t *testing.T) {
+	for _, raw := range []string{
+		"-oProxyCommand=touch /tmp/pwned",
+		"-oProxyCommand=x",
+		"-l",
+		"-",
+		"--",
+		"-x@host",
+		"-host:22",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			if ep, err := ParseEndpoint(raw); err == nil {
+				t.Errorf("accepted %q, destination would be %q", raw, ep.Destination())
+			}
+		})
+	}
+}
+
+// The tightened charset must not exclude anything real.
+func TestRealWorldHostsStillParse(t *testing.T) {
+	for _, raw := range []string{
+		"gitlab.example.com", "gitlab.example.com:22", "git@gitlab.example.com",
+		"git@gitlab.example.com:2222", "10.0.0.10", "10.0.0.10:22",
+		"::1", "[::1]:22", "fe80::1%eth0", "my_host-1.internal.example.com",
+		"gitlab-primary.eu-west-1.compute.internal:22",
+	} {
+		if _, err := ParseEndpoint(raw); err != nil {
+			t.Errorf("legitimate host %q rejected: %v", raw, err)
+		}
+	}
+}
