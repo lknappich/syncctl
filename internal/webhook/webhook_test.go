@@ -227,3 +227,42 @@ func TestExtractProjectPathEmpty(t *testing.T) {
 		t.Errorf("path = %q, want empty", path)
 	}
 }
+
+// The token is compared as a fixed-width digest, so a token that merely
+// shares a prefix with the secret must not be accepted.
+func TestWebhookRejectsPrefixAndWrongLengthTokens(t *testing.T) {
+	for _, token := range []string{"", "s", "secret", "secret-token-extra", "SECRET-TOKEN"} {
+		t.Run("token="+token, func(t *testing.T) {
+			var triggered bool
+			s, err := NewServer(":0", "secret-token", func(context.Context, string, string) error {
+				triggered = true
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/webhook",
+				strings.NewReader(`{"project":{"path_with_namespace":"g/p"}}`))
+			req.Header.Set("X-Gitlab-Token", token)
+			rec := httptest.NewRecorder()
+			s.handleWebhook(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want 401", rec.Code)
+			}
+			if triggered {
+				t.Error("a rejected request must not trigger a sync")
+			}
+		})
+	}
+}
+
+func TestWithTLSRecordsCertAndKey(t *testing.T) {
+	s, err := NewServer(":0", "secret-token", func(context.Context, string, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = s.WithTLS("/c.pem", "/k.pem")
+	if s.tlsCert != "/c.pem" || s.tlsKey != "/k.pem" {
+		t.Errorf("tlsCert=%q tlsKey=%q", s.tlsCert, s.tlsKey)
+	}
+}

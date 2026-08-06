@@ -8,6 +8,7 @@ package webhook
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,13 +24,18 @@ import (
 
 // Server receives GitLab webhooks and triggers immediate sync.
 type Server struct {
-	addr        string
-	secretToken string
+	addr string
+	// tokenDigest is the SHA-256 of the configured secret. Comparing
+	// digests keeps the comparison fixed-width: hmac.Equal returns early
+	// on a length mismatch, which would leak the secret's length.
+	tokenDigest [sha256.Size]byte
 	trigger     TriggerFunc
 	mux         *http.ServeMux
 	srv         *http.Server
 	ctx         context.Context
 	sem         chan struct{} // concurrency cap for triggered syncs
+	tlsCert     string
+	tlsKey      string
 }
 
 // TriggerFunc is called when a webhook is received. It receives the
@@ -46,7 +52,7 @@ func NewServer(addr, secretToken string, trigger TriggerFunc) (*Server, error) {
 	}
 	s := &Server{
 		addr:        addr,
-		secretToken: secretToken,
+		tokenDigest: sha256.Sum256([]byte(secretToken)),
 		trigger:     trigger,
 		mux:         http.NewServeMux(),
 		sem:         make(chan struct{}, 8), // max 8 concurrent webhook-triggered syncs
@@ -57,6 +63,16 @@ func NewServer(addr, secretToken string, trigger TriggerFunc) (*Server, error) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	return s, nil
+}
+
+// WithTLS serves the receiver over HTTPS using the given certificate and
+// key. Without it the GitLab secret token crosses the network in a
+// cleartext header on every delivery, so a TLS-terminating proxy is the
+// only other acceptable deployment.
+func (s *Server) WithTLS(certFile, keyFile string) *Server {
+	s.tlsCert = certFile
+	s.tlsKey = keyFile
+	return s
 }
 
 // Start blocks until ctx is cancelled or the server errors.
@@ -71,8 +87,13 @@ func (s *Server) Start(ctx context.Context) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.srv.ListenAndServe() }()
-	log.Info().Str("addr", s.addr).Msg("webhook server listening")
+	if s.tlsCert != "" {
+		go func() { errCh <- s.srv.ListenAndServeTLS(s.tlsCert, s.tlsKey) }()
+	} else {
+		go func() { errCh <- s.srv.ListenAndServe() }()
+	}
+	log.Info().Str("addr", s.addr).Bool("tls", s.tlsCert != "").
+		Msg("webhook server listening")
 	select {
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -95,8 +116,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// GitLab sends the secret token in the X-Gitlab-Token header.
-	token := req.Header.Get("X-Gitlab-Token")
-	if !hmac.Equal([]byte(token), []byte(s.secretToken)) {
+	token := sha256.Sum256([]byte(req.Header.Get("X-Gitlab-Token")))
+	if !hmac.Equal(token[:], s.tokenDigest[:]) {
 		metrics.DriftTotal.WithLabelValues("webhook", "critical").Inc()
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return

@@ -756,3 +756,73 @@ func TestValidateSSHPolicy(t *testing.T) {
 		})
 	}
 }
+func TestValidateExternalURLs(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{name: "https", url: "https://gitlab.example.com"},
+		{name: "https with port", url: "https://gitlab.example.com:8443"},
+		{name: "http warns but loads", url: "http://gitlab.example.com"},
+		{name: "empty is handled elsewhere", url: ""},
+		{name: "ftp scheme", url: "ftp://gitlab.example.com", wantErr: "must use http or https"},
+		{name: "no scheme", url: "gitlab.example.com", wantErr: "must use http or https"},
+		{name: "no host", url: "https://", wantErr: "has no host"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Primary: SiteConfig{ExternalURL: tc.url}}
+			var errs []error
+			c.validateExternalURLs(&errs)
+			joined := errors.Join(errs...)
+			if tc.wantErr == "" {
+				if joined != nil {
+					t.Fatalf("unexpected errors: %v", joined)
+				}
+				return
+			}
+			if joined == nil {
+				t.Fatal("expected a validation error")
+			}
+			if !strings.Contains(joined.Error(), tc.wantErr) {
+				t.Errorf("error %q should mention %q", joined, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateWebhookTLS(t *testing.T) {
+	tests := []struct {
+		name    string
+		hook    *WebhookConfig
+		wantErr bool
+	}{
+		{name: "no webhook block", hook: nil},
+		{name: "plaintext warns only", hook: &WebhookConfig{Addr: ":9102"}},
+		{name: "both set", hook: &WebhookConfig{TLSCert: "/c.pem", TLSKey: "/k.pem"}},
+		{name: "cert without key", hook: &WebhookConfig{TLSCert: "/c.pem"}, wantErr: true},
+		{name: "key without cert", hook: &WebhookConfig{TLSKey: "/k.pem"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Webhook: tc.hook}
+			var errs []error
+			c.validateWebhookTLS(&errs)
+			if tc.wantErr && len(errs) == 0 {
+				t.Error("expected a validation error")
+			}
+			if !tc.wantErr && len(errs) != 0 {
+				t.Errorf("unexpected errors: %v", errs)
+			}
+		})
+	}
+}
+
+func TestMetricsAddrDefaultsToLoopback(t *testing.T) {
+	c := &Config{}
+	_ = c.validate()
+	if c.Metrics.Addr != "127.0.0.1:9101" {
+		t.Errorf("metrics.addr = %q, want 127.0.0.1:9101 — /metrics has no auth", c.Metrics.Addr)
+	}
+}

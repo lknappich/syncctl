@@ -328,7 +328,14 @@ func buildWebhookServer(cfg *config.Config, recs []reconciler.Reconciler, dryRun
 		return nil
 	}
 	mgr := webhook.NewTriggerManager(trigger)
-	return webhook.NewServer(cfg.Webhook.Addr, cfg.Webhook.SecretToken, mgr.Trigger)
+	srv, err := webhook.NewServer(cfg.Webhook.Addr, cfg.Webhook.SecretToken, mgr.Trigger)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Webhook.TLSCert != "" {
+		srv = srv.WithTLS(cfg.Webhook.TLSCert, cfg.Webhook.TLSKey)
+	}
+	return srv, nil
 }
 
 // --- pg subcommand ---
