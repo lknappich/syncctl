@@ -77,6 +77,10 @@ secondaries:
         secret_key: ${S3_SK}
     registry:
       mode: s3
+      # The container registry is a separate service from GitLab, on its
+      # own host and port. Without this URL the registry reconciler is
+      # not run at all — it will not guess from external_url.
+      url: https://registry.secondary.example.com
       s3:
         region: us-east-1
         primary_bucket: gitlab-registry-primary

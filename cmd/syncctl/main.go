@@ -291,9 +291,15 @@ func buildSiteReconcilers(ctx context.Context, cfg *config.Config, s *config.Sit
 		recs = append(recs, fsstorage.New(&cfg.Primary, s, dryRun, cfg.SSHExecConfig()))
 	}
 
-	// Registry.
+	// Registry. New returns nil when either side has no registry.url —
+	// there is no endpoint to check, and a reconciler that probes the
+	// wrong host reports on something other than the registry.
 	if cfg.Primary.Registry != nil {
-		recs = append(recs, registry.New(&cfg.Primary, s, dryRun))
+		if rec := registry.New(&cfg.Primary, s, dryRun); rec != nil {
+			recs = append(recs, rec)
+		} else {
+			log.Warn().Msg("registry configured but registry.url is not set on both sites; registry parity will not be checked")
+		}
 	}
 
 	// Consistency sweep.
@@ -599,21 +605,30 @@ func newRunbookCmd(g *globalFlags) *cobra.Command {
 // --- sla subcommand ---
 
 func newSLACmd(g *globalFlags) *cobra.Command {
+	var metricsURL string
 	cmd := &cobra.Command{
 		Use:           "sla",
-		Short:         "Print RPO/RTO and lag summary from current metrics",
+		Short:         "Print RPO/RTO and lag summary from a running syncctl's metrics",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			metrics.Register(metrics.Registry)
+			if metricsURL == "" {
+				cfg, err := loadConfig(g)
+				if err != nil {
+					return err
+				}
+				metricsURL = sla.DefaultMetricsURL(cfg.Metrics.Addr)
+			}
 			sigCtx, sigCancel := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
 			defer sigCancel()
-			ctx, cancel := context.WithTimeout(sigCtx, 10*time.Second)
+			ctx, cancel := context.WithTimeout(sigCtx, 15*time.Second)
 			defer cancel()
-			return sla.Generate(ctx, os.Stdout)
+			return sla.Generate(ctx, os.Stdout, metricsURL)
 		},
 	}
+	cmd.Flags().StringVar(&metricsURL, "metrics-url", "",
+		"metrics endpoint of the running syncctl (default: derived from metrics.addr)")
 	return cmd
 }
 

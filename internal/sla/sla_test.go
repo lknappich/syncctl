@@ -3,71 +3,101 @@ package sla
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/lknappich/syncctl/internal/metrics"
 )
 
-func TestGeneratePrintsReport(t *testing.T) {
+// metricsHandler serves an exposition-format body like a live syncctl.
+func metricsHandler(body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, _ = w.Write([]byte(body))
+	})
+}
+
+func TestGenerateReadsLiveMetrics(t *testing.T) {
+	body := fmt.Sprintf(`# HELP syncctl_pg_replay_lag_seconds lag
+# TYPE syncctl_pg_replay_lag_seconds gauge
+syncctl_pg_replay_lag_seconds{secondary="s1"} 5
+syncctl_pg_replay_lag_seconds{secondary="s2"} 12
+# HELP syncctl_drift_total drift
+# TYPE syncctl_drift_total counter
+syncctl_drift_total{component="db:projects",severity="warning"} 3
+syncctl_drift_total{component="git_rsync",severity="critical"} 1
+# HELP syncctl_last_sync_timestamp_seconds last sync
+# TYPE syncctl_last_sync_timestamp_seconds gauge
+syncctl_last_sync_timestamp_seconds{component="git_rsync"} %d
+`, time.Now().Add(-90*time.Second).Unix())
+
+	srv := httptest.NewServer(metricsHandler(body))
+	defer srv.Close()
+
 	var buf bytes.Buffer
-	err := Generate(context.Background(), &buf)
-	if err != nil {
+	if err := Generate(context.Background(), &buf, srv.URL); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	out := buf.String()
-	if out == "" {
-		t.Error("expected non-empty report")
+
+	if !strings.Contains(out, "Current: 12s") {
+		t.Errorf("expected the highest observed lag across secondaries, got:\n%s", out)
 	}
-	if !bytes.Contains(buf.Bytes(), []byte("SLA Report")) {
-		t.Errorf("expected 'SLA Report' in output, got: %s", out)
+	if !strings.Contains(out, "Drift Events (cumulative): 4") {
+		t.Errorf("expected drift counters summed, got:\n%s", out)
+	}
+	if strings.Contains(out, "RPO Estimate: 0s") {
+		t.Errorf("a live endpoint must not produce a zeroed RPO:\n%s", out)
 	}
 }
 
-func TestReportPrint(t *testing.T) {
-	r := &Report{
-		ComponentsHealthy: 3,
-		ComponentsTotal:   4,
-	}
+// The old implementation gathered its own process registry, which in a
+// one-shot command has never recorded anything — so it always printed
+// zero lag and zero drift, the reading an operator most wants to see,
+// with nothing behind it. An unreachable endpoint must be an error.
+func TestGenerateFailsWhenEndpointUnreachable(t *testing.T) {
+	srv := httptest.NewServer(metricsHandler(""))
+	url := srv.URL
+	srv.Close()
+
 	var buf bytes.Buffer
-	r.Print(&buf)
-	out := buf.String()
-	if !bytes.Contains(buf.Bytes(), []byte("3/4")) {
-		t.Errorf("expected '3/4' in output, got: %s", out)
+	err := Generate(context.Background(), &buf, url)
+	if err == nil {
+		t.Fatal("expected an error rather than a zeroed report")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("nothing should be printed when no metrics were read, got: %s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "syncctl serve") {
+		t.Errorf("the error should hint at the cause, got: %v", err)
 	}
 }
 
-func TestGenerateWithMetrics(t *testing.T) {
-	// Register metric values on the default registry.
-	metrics.Register(prometheus.DefaultRegisterer)
-	metrics.PGReplayLagSeconds.WithLabelValues("s1").Set(5.0)
-	metrics.DriftTotal.WithLabelValues("db:projects", "warning").Inc()
-	metrics.LastSyncTimestamp.WithLabelValues("git_rsync").Set(float64(time.Now().Unix()))
+func TestGenerateFailsOnNonOKStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
 
 	var buf bytes.Buffer
-	err := Generate(context.Background(), &buf)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "PostgreSQL Replay Lag") {
-		t.Errorf("expected PG lag section: %s", out)
-	}
-	if !strings.Contains(out, "Drift Events") {
-		t.Errorf("expected drift section: %s", out)
+	if err := Generate(context.Background(), &buf, srv.URL); err == nil {
+		t.Fatal("expected an error for a non-200 response")
 	}
 }
 
-func TestGenerateGatherError(t *testing.T) {
-	// Hard to force a gather error without a broken metric; just verify
-	// Generate with default empty registry still works.
-	var buf bytes.Buffer
-	err := Generate(context.Background(), &buf)
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
+func TestDefaultMetricsURL(t *testing.T) {
+	tests := []struct{ addr, want string }{
+		{"", "http://127.0.0.1:9101/metrics"},
+		{":9101", "http://127.0.0.1:9101/metrics"},
+		{"127.0.0.1:9101", "http://127.0.0.1:9101/metrics"},
+		{"10.0.0.5:9999", "http://10.0.0.5:9999/metrics"},
+	}
+	for _, tc := range tests {
+		if got := DefaultMetricsURL(tc.addr); got != tc.want {
+			t.Errorf("DefaultMetricsURL(%q) = %q, want %q", tc.addr, got, tc.want)
+		}
 	}
 }
 
@@ -83,19 +113,9 @@ func TestReportPrintFull(t *testing.T) {
 	var buf bytes.Buffer
 	r.Print(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "5s") {
-		t.Errorf("expected 5s in output: %s", out)
-	}
-	if !strings.Contains(out, "10s") {
-		t.Errorf("expected 10s in output: %s", out)
-	}
-	if !strings.Contains(out, "30s") {
-		t.Errorf("expected 30s in output: %s", out)
-	}
-	if !strings.Contains(out, "RPO") {
-		t.Errorf("expected RPO in output: %s", out)
-	}
-	if !strings.Contains(out, "RTO") {
-		t.Errorf("expected RTO in output: %s", out)
+	for _, want := range []string{"5s", "10s", "30s", "RPO", "RTO", "2/3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output: %s", want, out)
+		}
 	}
 }
