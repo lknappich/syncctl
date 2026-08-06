@@ -120,7 +120,7 @@ func TestListRepositoriesOK(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	repos, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2")
+	repos, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2")
 	if err != nil {
 		t.Fatalf("listRepositories: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestListRepositoriesAuthRequired(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2")
+	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2")
 	if !errors.Is(err, errAuthFailed) {
 		t.Errorf("a 401 with no usable challenge must be a failure, got %v", err)
 	}
@@ -147,7 +147,7 @@ func TestListRepositoriesBadStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2")
+	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2")
 	if err == nil {
 		t.Fatal("expected error on 500")
 	}
@@ -159,7 +159,7 @@ func TestListRepositoriesBadJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2")
+	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2")
 	if err == nil {
 		t.Fatal("expected error on bad JSON")
 	}
@@ -167,7 +167,7 @@ func TestListRepositoriesBadJSON(t *testing.T) {
 
 func TestListRepositoriesBadURL(t *testing.T) {
 	r := &Reconciler{primaryClient: &http.Client{}}
-	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), "http://[::1")
+	_, err := r.listRepositories(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), "http://[::1")
 	if err == nil {
 		t.Fatal("expected error on bad URL")
 	}
@@ -182,7 +182,7 @@ func TestListTagsOK(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	set, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2", "foo")
+	set, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2", "foo")
 	if err != nil {
 		t.Fatalf("listTags: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestListTagsAuthRequired(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2", "foo")
+	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2", "foo")
 	if !errors.Is(err, errAuthFailed) {
 		t.Errorf("a 401 with no usable challenge must be a failure, got %v", err)
 	}
@@ -209,7 +209,7 @@ func TestListTagsBadStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2", "foo")
+	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2", "foo")
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
@@ -217,7 +217,7 @@ func TestListTagsBadStatus(t *testing.T) {
 
 func TestListTagsBadURL(t *testing.T) {
 	r := &Reconciler{primaryClient: &http.Client{}}
-	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), "http://[::1", "foo")
+	_, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), "http://[::1", "foo")
 	if err == nil {
 		t.Fatal("expected error on bad URL")
 	}
@@ -229,7 +229,7 @@ func TestListTagsEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Reconciler{primaryClient: srv.Client()}
-	set, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient), srv.URL+"/v2", "foo")
+	set, err := r.listTags(context.Background(), r.primaryClient, newAuthenticator("", r.primaryClient, []string{"127.0.0.1"}, true), srv.URL+"/v2", "foo")
 	if err != nil {
 		t.Fatalf("listTags: %v", err)
 	}
@@ -303,8 +303,8 @@ func newTestReconciler(primaryURL, secondaryURL string, pc, sc *http.Client) *Re
 		secondaryURL:    secondaryURL + "/v2",
 		primaryClient:   pc,
 		secondaryClient: sc,
-		primaryAuth:     newAuthenticator("", pc),
-		secondaryAuth:   newAuthenticator("", sc),
+		primaryAuth:     newAuthenticator("", pc, []string{"127.0.0.1"}, true),
+		secondaryAuth:   newAuthenticator("", sc, []string{"127.0.0.1"}, true),
 	}
 }
 

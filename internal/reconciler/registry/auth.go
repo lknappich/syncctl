@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -25,16 +26,66 @@ type authenticator struct {
 	static string
 	client *http.Client
 
+	// allowedHosts are the hosts a challenge may name as its auth realm.
+	// The realm arrives in a header the responding server controls, so
+	// without this it is an arbitrary outbound GET from a host holding
+	// replication credentials and SSH access to both sites. Every entry
+	// comes from the operator's own config.
+	allowedHosts map[string]bool
+
+	// allowInsecure permits an http realm, for a registry that is itself
+	// plain http (local MinIO, dev stacks).
+	allowInsecure bool
+
 	mu     sync.Mutex
 	cached map[string]string // scope -> token
 }
 
-func newAuthenticator(staticToken string, client *http.Client) *authenticator {
-	return &authenticator{
-		static: staticToken,
-		client: client,
-		cached: map[string]string{},
+func newAuthenticator(staticToken string, client *http.Client, allowedHosts []string, allowInsecure bool) *authenticator {
+	allowed := make(map[string]bool, len(allowedHosts))
+	for _, h := range allowedHosts {
+		if h != "" {
+			allowed[strings.ToLower(h)] = true
+		}
 	}
+	a := &authenticator{
+		static:        staticToken,
+		client:        client,
+		allowedHosts:  allowed,
+		allowInsecure: allowInsecure,
+		cached:        map[string]string{},
+	}
+	return a
+}
+
+// errRealmNotAllowed reports a challenge naming a host the operator
+// never configured.
+var errRealmNotAllowed = errors.New("auth realm host is not one of the configured registry or site hosts")
+
+// checkRealm decides whether a challenge's realm may be fetched.
+func (a *authenticator) checkRealm(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse auth realm: %w", err)
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		if !a.allowInsecure {
+			return nil, fmt.Errorf("auth realm uses http but the registry is https")
+		}
+	default:
+		return nil, fmt.Errorf("auth realm scheme %q is not http or https", u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("auth realm has no host")
+	}
+	if !a.allowedHosts[strings.ToLower(u.Hostname())] {
+		// Deliberately does not echo the realm: the error reaches logs,
+		// and repeating an attacker-chosen URL there helps nobody.
+		return nil, fmt.Errorf("%w (host %q)", errRealmNotAllowed, u.Hostname())
+	}
+	return u, nil
 }
 
 // challenge is a parsed Bearer WWW-Authenticate header.
@@ -110,9 +161,9 @@ func (a *authenticator) token(ctx context.Context, c challenge) (string, error) 
 	}
 	a.mu.Unlock()
 
-	u, err := url.Parse(c.Realm)
+	u, err := a.checkRealm(c.Realm)
 	if err != nil {
-		return "", fmt.Errorf("parse auth realm %q: %w", c.Realm, err)
+		return "", err
 	}
 	q := u.Query()
 	if c.Service != "" {
@@ -127,13 +178,22 @@ func (a *authenticator) token(ctx context.Context, c challenge) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	resp, err := a.client.Do(req)
+	// A redirect can leave the approved host set, so each hop is checked
+	// too rather than trusting the first URL alone.
+	client := *a.client
+	client.CheckRedirect = func(r *http.Request, _ []*http.Request) error {
+		if !a.allowedHosts[strings.ToLower(r.URL.Hostname())] {
+			return fmt.Errorf("%w (redirect to %q)", errRealmNotAllowed, r.URL.Hostname())
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch registry token: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth realm %s: status %d", c.Realm, resp.StatusCode)
+		return "", fmt.Errorf("auth realm at %s: status %d", u.Hostname(), resp.StatusCode)
 	}
 
 	var body struct {

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -67,8 +68,8 @@ func New(primary, secondary *config.SiteConfig, site string, dryRun bool) *Recon
 		secondaryURL:    secondaryURL,
 		primaryClient:   primaryClient,
 		secondaryClient: secondaryClient,
-		primaryAuth:     newAuthenticator(registryToken(primary), primaryClient),
-		secondaryAuth:   newAuthenticator(registryToken(secondary), secondaryClient),
+		primaryAuth:     newAuthenticator(registryToken(primary), primaryClient, realmHosts(primary), insecureRegistry(primary)),
+		secondaryAuth:   newAuthenticator(registryToken(secondary), secondaryClient, realmHosts(secondary), insecureRegistry(secondary)),
 		dryRun:          dryRun,
 	}
 }
@@ -78,6 +79,42 @@ func registryBaseURL(s *config.SiteConfig) string {
 		return ""
 	}
 	return strings.TrimSuffix(s.Registry.URL, "/") + "/v2"
+}
+
+// realmHosts are the hosts a registry's auth challenge may name.
+//
+// The realm arrives in a header the registry controls, so it is checked
+// against hosts the operator configured rather than trusted. GitLab
+// normally serves the registry from one host (registry.example.com) and
+// its auth realm from another (gitlab.example.com/jwt/auth), so both the
+// registry URL and the site's external_url are accepted — plus an
+// explicit registry.auth_realm for anything else.
+func realmHosts(s *config.SiteConfig) []string {
+	var hosts []string
+	add := func(raw string) {
+		if raw == "" {
+			return
+		}
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+			hosts = append(hosts, u.Hostname())
+		}
+	}
+	add(s.ExternalURL)
+	if s.Registry != nil {
+		add(s.Registry.URL)
+		add(s.Registry.AuthRealm)
+	}
+	return hosts
+}
+
+// insecureRegistry reports whether the registry itself is plain http, in
+// which case an http auth realm is no additional exposure.
+func insecureRegistry(s *config.SiteConfig) bool {
+	if s.Registry == nil || s.Registry.URL == "" {
+		return false
+	}
+	u, err := url.Parse(s.Registry.URL)
+	return err == nil && u.Scheme == "http"
 }
 
 func registryToken(s *config.SiteConfig) string {
