@@ -122,8 +122,8 @@ They do **not** contain repository content, database rows, user
 identities, or any secret value. Command transcripts from `git` and
 `rsync` are truncated and only emitted at `debug`.
 
-If project and group paths are themselves confidential — they often are —
-set:
+Project and group paths are frequently confidential in themselves. If
+yours are, or if your logs leave your infrastructure, set:
 
 ```yaml
 log:
@@ -164,8 +164,9 @@ Before running `syncctl serve` in production:
 - [ ] Log retention for `syncctl` output is set deliberately, and
       `log.redact_project_paths` reflects whether project names may leave
       your infrastructure
-- [ ] `/metrics` is not reachable from untrusted networks
-      (`metrics.addr`, see [`SECURITY.md`](SECURITY.md#network-exposure))
+- [ ] `/metrics` is not reachable from untrusted networks — loopback by
+      default since 1.0, so confirm any widening of `metrics.addr` was
+      deliberate (see [`SECURITY.md`](SECURITY.md#network-exposure))
 - [ ] Your erasure process accounts for sweep lag on repositories and
       blobs
 
