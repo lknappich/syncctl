@@ -105,8 +105,13 @@ func (c *Controller) check(ctx context.Context) {
 		if down >= 3 {
 			c.primaryDown.Store(true)
 			if c.autoFailover {
-				log.Error().Msg("primary declared down; auto-failover triggered")
-				if err := c.Promote(ctx, c.cfg.Secondaries[0].Name); err != nil {
+				target, err := c.autoFailoverTarget()
+				if err != nil {
+					log.Error().Err(err).Msg("auto-failover cannot proceed")
+					return
+				}
+				log.Error().Str("secondary", target).Msg("primary declared down; auto-failover triggered")
+				if err := c.Promote(ctx, target); err != nil {
 					log.Error().Err(err).Msg("auto-failover failed")
 				}
 			} else {
@@ -132,6 +137,54 @@ func (c *Controller) countHealthFailures(ctx context.Context) int {
 		}
 	}
 	return fails
+}
+
+// autoFailoverTarget resolves which secondary auto-failover promotes.
+//
+// It used to be Secondaries[0] unconditionally, so with several replicas
+// the choice of which one became the primary was made by config-file
+// ordering rather than by anything about the replicas. Refusing is the
+// safer failure: a primary that stays down is recoverable, a promotion
+// of the wrong replica is not.
+func (c *Controller) autoFailoverTarget() (string, error) {
+	if c.cfg.Failover != nil && c.cfg.Failover.PromoteSecondary != "" {
+		name := c.cfg.Failover.PromoteSecondary
+		if _, err := c.findSecondary(name); err != nil {
+			return "", fmt.Errorf("failover.promote_secondary: %w", err)
+		}
+		return name, nil
+	}
+	switch len(c.cfg.Secondaries) {
+	case 0:
+		return "", errors.New("no secondaries configured")
+	case 1:
+		return c.cfg.Secondaries[0].Name, nil
+	default:
+		return "", fmt.Errorf(
+			"%d secondaries configured and failover.promote_secondary is unset; "+
+				"refusing to choose one by config order — set it, or promote manually with `syncctl failover --secondary <name> --yes`",
+			len(c.cfg.Secondaries))
+	}
+}
+
+// ResolveNewPrimary picks the secondary that is now serving as primary,
+// for the role-swap. Same rule as autoFailoverTarget: unambiguous when
+// there is one candidate, explicit otherwise.
+func (c *Controller) ResolveNewPrimary(name string) (*config.SiteConfig, error) {
+	if name != "" {
+		return c.findSecondary(name)
+	}
+	switch len(c.cfg.Secondaries) {
+	case 0:
+		return nil, errors.New("no secondaries configured; cannot determine the new primary to re-base from")
+	case 1:
+		return &c.cfg.Secondaries[0], nil
+	default:
+		return nil, fmt.Errorf(
+			"%d secondaries configured; pass --new-primary <name> to say which one was promoted "+
+				"(re-basing from the wrong site would replicate a stale replica over this host)",
+			len(c.cfg.Secondaries))
+	}
 }
 
 // pollURL returns true if the URL returns HTTP 200 within the timeout.
@@ -230,18 +283,19 @@ func (c *Controller) promotionSteps(secondary *config.SiteConfig) []promotionSte
 
 // AdoptAsSecondary converts the old primary into a secondary of the new
 // primary. This is the role-swap step.
-func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH string) error {
+func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH, newPrimaryName string) error {
 	if !c.dryRun && !c.cfg.Sync.FailoverEnabled {
 		return fmt.Errorf("failover is disabled in config")
 	}
 
-	log.Info().Str("old_primary_ssh", oldPrimarySSH).Bool("dry_run", c.dryRun).
-		Msg("starting role-swap: adopting old primary as secondary")
-
-	if len(c.cfg.Secondaries) == 0 {
-		return fmt.Errorf("no secondaries configured; cannot determine the new primary to re-base from")
+	newPrimary, err := c.ResolveNewPrimary(newPrimaryName)
+	if err != nil {
+		return err
 	}
-	newPrimary := c.cfg.Secondaries[0]
+
+	log.Info().Str("old_primary_ssh", oldPrimarySSH).Str("new_primary", newPrimary.Name).
+		Bool("dry_run", c.dryRun).
+		Msg("starting role-swap: adopting old primary as secondary")
 
 	defer func() {
 		if err := c.removeRemotePassfile(context.WithoutCancel(ctx), oldPrimarySSH); err != nil {

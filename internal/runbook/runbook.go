@@ -68,10 +68,15 @@ still answering health checks and you are promoting deliberately, add
 
 When the old primary comes back online:
 
-    syncctl adopt-as-secondary --old-primary-ssh {{.Primary.SSHHost}}
+    syncctl adopt-as-secondary --old-primary-ssh {{.Primary.SSHHost}}{{if gt (len .Secondaries) 1}} --new-primary <promoted-secondary>{{end}}
 
 This runs pg_basebackup from the new primary and reconfigures the old
 primary as a read-only secondary.
+{{if gt (len .Secondaries) 1}}
+With more than one secondary configured, ` + "`--new-primary`" + ` is required:
+re-basing from the wrong site would replicate a stale replica over this
+host. Pass the name of the secondary you promoted.
+{{end}}
 
 The old primary's PGDATA still holds its own cluster, and pg_basebackup
 will not write into a populated directory. Back that cluster up, then
