@@ -643,3 +643,36 @@ func TestPathExistsCheckQuotesThePath(t *testing.T) {
 		t.Errorf("remote command = %q, want %q", got, want)
 	}
 }
+func TestDBKeyPresentCheckReadsBothLocations(t *testing.T) {
+	runner := &mockRunner{out: []byte("1")}
+	dbKeyPresentCheck(context.Background(), "primary", "h", runner)
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(runner.calls))
+	}
+	cmd := runner.calls[0].cmd
+	for _, want := range []string{
+		"/var/opt/gitlab/gitlab-rails/etc/secrets.yml",
+		"/etc/gitlab/gitlab.rb",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("remote command must inspect %s, got: %s", want, cmd)
+		}
+	}
+}
+
+// A key found only in gitlab.rb must PASS, not FAIL.
+func TestDBKeyPresentCheckPassesOnGitlabRbOnly(t *testing.T) {
+	runner := &mockRunner{out: []byte("1")}
+	got := dbKeyPresentCheck(context.Background(), "primary", "h", runner)
+	if got.Status != "PASS" {
+		t.Errorf("Status = %q, want PASS (detail: %s)", got.Status, got.Detail)
+	}
+}
+
+func TestDBKeyPresentCheckFailsWhenAbsent(t *testing.T) {
+	runner := &mockRunner{out: []byte("0")}
+	got := dbKeyPresentCheck(context.Background(), "primary", "h", runner)
+	if got.Status != "FAIL" {
+		t.Errorf("Status = %q, want FAIL", got.Status)
+	}
+}
