@@ -143,6 +143,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 }
 
 // bucketStats lists all objects in a bucket and returns (count, totalSize).
+//
+// Cost: this is a full ListObjectsV2 pagination of both buckets on every
+// sweep — at the default 5-minute interval, 288 full listings per bucket
+// per day. On an install with millions of objects that is a material
+// per-request bill, and the sweep may not finish inside its interval.
+// Raise sync.sweep_interval for large buckets.
+//
+// Count-plus-size parity is also a weak check: it cannot detect an object
+// replaced by a different object of the same size. Provider replication
+// metrics (S3's ReplicationLatency and OperationsPendingReplication) would
+// be both cheaper and stronger.
 func bucketStats(ctx context.Context, client *s3.Client, bucket string) (int64, int64, error) {
 	var count, totalSize int64
 	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{

@@ -405,52 +405,6 @@ func parseDSNPassword(t *testing.T, dsn string) string {
 	return sb.String()
 }
 
-func TestExpandEnvReplacesAllRefs(t *testing.T) {
-	t.Setenv("FOO", "bar")
-	t.Setenv("BAZ", "qux")
-	in := []byte("key: ${FOO}\nother: ${BAZ}")
-	out, err := ExpandEnv(in)
-	if err != nil {
-		t.Fatalf("ExpandEnv: %v", err)
-	}
-	want := "key: bar\nother: qux"
-	if string(out) != want {
-		t.Errorf("got %q, want %q", out, want)
-	}
-}
-
-func TestExpandEnvMissingVar(t *testing.T) {
-	os.Unsetenv("DEFINITELY_UNSET_VAR_XYZ")
-	in := []byte("key: ${DEFINITELY_UNSET_VAR_XYZ}")
-	_, err := ExpandEnv(in)
-	if err == nil {
-		t.Fatal("expected error for missing env var")
-	}
-	if !strings.Contains(err.Error(), "DEFINITELY_UNSET_VAR_XYZ") {
-		t.Errorf("error should name the missing var: %v", err)
-	}
-}
-
-func TestExpandEnvEmptyVarIsMissing(t *testing.T) {
-	t.Setenv("EMPTY_VAR", "")
-	in := []byte("key: ${EMPTY_VAR}")
-	_, err := ExpandEnv(in)
-	if err == nil {
-		t.Fatal("empty env var should be treated as missing")
-	}
-}
-
-func TestExpandEnvNoRefs(t *testing.T) {
-	in := []byte("key: plain-value\n")
-	out, err := ExpandEnv(in)
-	if err != nil {
-		t.Fatalf("ExpandEnv: %v", err)
-	}
-	if string(out) != string(in) {
-		t.Errorf("got %q, want %q", out, in)
-	}
-}
-
 func TestSSHExecConfig(t *testing.T) {
 	c := &Config{SSH: SSHConfig{KnownHostsFile: "/etc/ssh/known_hosts", StrictHostKeyChecking: "yes"}}
 	got := c.SSHExecConfig()

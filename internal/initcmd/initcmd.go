@@ -183,13 +183,12 @@ func GenerateYAML(a *Answers, w io.Writer) error {
 	b.WriteString(fmt.Sprintf("  read_only_secondary: %t\n", a.ReadOnlySecondary))
 	b.WriteString("  consistency_sample_pct: 0.01\n")
 
-	// --- Metrics/Log/ControlDB ---
+	// --- Metrics/Log ---
 	b.WriteString("\nmetrics:\n")
 	b.WriteString("  addr: \":9101\"\n")
 	b.WriteString("\nlog:\n")
 	b.WriteString("  level: info\n")
 	b.WriteString("  format: json\n")
-	b.WriteString("\ncontrol_db: sqlite://data/syncctl.db\n")
 
 	_, err := io.WriteString(w, b.String())
 	return err

@@ -24,12 +24,21 @@ import (
 
 // Config is the root configuration object.
 type Config struct {
-	Primary      SiteConfig          `yaml:"primary"`
-	Secondaries  []SiteConfig        `yaml:"secondaries"`
-	Sync         SyncConfig          `yaml:"sync"`
-	Metrics      MetricsConfig       `yaml:"metrics"`
-	Log          LogConfig           `yaml:"log"`
-	ControlDB    string              `yaml:"control_db"` // "sqlite://path" or "postgres://dsn"
+	Primary     SiteConfig    `yaml:"primary"`
+	Secondaries []SiteConfig  `yaml:"secondaries"`
+	Sync        SyncConfig    `yaml:"sync"`
+	Metrics     MetricsConfig `yaml:"metrics"`
+	Log         LogConfig     `yaml:"log"`
+	// ControlDB is accepted and ignored.
+	//
+	// It was defaulted, printed by config-validate, written by the init
+	// wizard, and documented in the example config — but no code ever
+	// read it. There is no control database: sweep history, drift state
+	// and failover records are in-memory and lost on restart. Keeping the
+	// field parseable means existing config files still load (the decoder
+	// runs with KnownFields(true)); the warning says what to do about it.
+	ControlDB string `yaml:"control_db,omitempty"`
+
 	Webhook      *WebhookConfig      `yaml:"webhook,omitempty"`
 	APIValidator *APIValidatorConfig `yaml:"api_validator,omitempty"`
 	Failover     *FailoverConfig     `yaml:"failover,omitempty"`
@@ -275,28 +284,6 @@ func Load(path string) (*Config, error) {
 // envRefRe matches ${VAR} placeholders in string values.
 var envRefRe = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 
-// ExpandEnv replaces ${VAR} placeholders in raw YAML with the corresponding
-// environment variable value. Deprecated: env resolution now happens after
-// YAML parse via resolveEnvInStruct. Kept for external callers that may
-// depend on it.
-func ExpandEnv(raw []byte) ([]byte, error) {
-	var missing []string
-	out := envRefRe.ReplaceAllFunc(raw, func(m []byte) []byte {
-		name := envRefRe.FindSubmatch(m)[1]
-		v, ok := os.LookupEnv(string(name))
-		if !ok || v == "" {
-			missing = append(missing, string(name))
-			return m
-		}
-		return []byte(v)
-	})
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("environment variables referenced but not set: %s",
-			strings.Join(missing, ", "))
-	}
-	return out, nil
-}
-
 // envRefOnlyRe matches a value that is nothing but a single ${VAR}
 // placeholder. Secrets must match it exactly: a partial reference like
 // "prefix-${VAR}" would leave part of the secret in the file.
@@ -455,6 +442,9 @@ func (c *Config) validate() error {
 	if c.Primary.Postgres.ReplicationPassword == "" {
 		errs = append(errs, errors.New("primary.postgres.replication_password is required (via env)"))
 	}
+	if c.ControlDB != "" {
+		log.Warn().Msg("control_db is set but unused — syncctl keeps no persistent state; remove the key from your config")
+	}
 	c.warnInsecureSSL(&errs)
 	c.validateSSHHosts(&errs)
 	c.validatePaths(&errs)
@@ -512,9 +502,6 @@ func (c *Config) validate() error {
 	}
 	if c.Log.Format == "" {
 		c.Log.Format = "json"
-	}
-	if c.ControlDB == "" {
-		c.ControlDB = "sqlite://data/syncctl.db"
 	}
 	if c.Sync.ConsistencySamplePct == 0 {
 		c.Sync.ConsistencySamplePct = 0.01

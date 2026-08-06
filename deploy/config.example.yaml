@@ -107,8 +107,6 @@ log:
   level: info
   format: json
 
-control_db: sqlite://data/syncctl.db
-
 # Optional: webhook receiver for immediate per-project sync on push/create/delete.
 # Export WEBHOOK_SECRET_TOKEN before starting syncctl.
 # GitLab sends the secret token in a header on every delivery, so serve
