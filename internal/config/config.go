@@ -146,6 +146,13 @@ type RegistryConfig struct {
 	// the standard auth-realm challenge flow. Env-only.
 	Token string `yaml:"token,omitempty" env:"required"`
 
+	// AuthRealm pins the token endpoint a registry's challenge may name,
+	// for deployments where it is neither the registry host nor the
+	// site's external_url. The realm arrives in a header the registry
+	// controls, so it is only ever honoured when it names a host that
+	// appears in this config.
+	AuthRealm string `yaml:"auth_realm,omitempty"`
+
 	// FSPath is the registry filesystem root (mode=fs).
 	FSPath string `yaml:"fs_path,omitempty"`
 	// S3 follows the same S3Config pattern (registry may share or differ

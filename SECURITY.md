@@ -126,6 +126,21 @@ receiver on plaintext HTTP logs a warning at startup.
 The token is compared as a SHA-256 digest in constant time, so neither
 its value nor its length is observable from response timing.
 
+### Container registry auth realm
+
+The Docker Registry v2 flow answers an unauthenticated request with a 401
+naming a token endpoint in its `WWW-Authenticate` header — a value the
+responding server controls. Fetching it unconditionally would let a
+malicious or compromised registry make `syncctl` issue arbitrary requests
+from a host that holds Postgres replication credentials, SSH access to
+both sites, and object-storage keys.
+
+A realm is honoured only when its host is one the operator configured —
+`registry.url`, the site's `external_url`, or an explicit
+`registry.auth_realm` — and only over `https` unless the registry itself
+is plain `http`. Redirects are checked against the same set, so an
+approved host cannot bounce the request onward.
+
 ### external_url scheme
 
 The API validator sends a GitLab personal access token in a

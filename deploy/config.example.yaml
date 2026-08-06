@@ -85,6 +85,11 @@ secondaries:
       # own host and port. Without this URL the registry reconciler is
       # not run at all — it will not guess from external_url.
       url: https://registry.secondary.example.com
+      # The registry's 401 names its own token endpoint in a header it
+      # controls, so syncctl only honours a realm whose host appears in
+      # this config — the registry url or external_url above. Set this if
+      # yours lives somewhere else.
+      # auth_realm: https://auth.example.com/jwt/auth
       s3:
         region: us-east-1
         primary_bucket: gitlab-registry-primary
