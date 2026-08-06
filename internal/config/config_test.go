@@ -586,8 +586,56 @@ func TestCheckSecretsReportsEveryViolation(t *testing.T) {
 	}
 }
 
-func TestLoadWarnsButAcceptsLiteralSecret(t *testing.T) {
-	yaml := `
+func TestLoadRejectsLiteralSecretAtOneDotZero(t *testing.T) {
+	t.Setenv("PG_REPL_PASSWORD", "x")
+	t.Setenv("SEC_REPL_PASSWORD", "y")
+	path := writeTempConfig(t, literalSecretConfig)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("1.0 must reject a plaintext secret; the 0.2.x warning said so")
+	}
+	if !strings.Contains(err.Error(), "primary.postgres.password") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+	// The way forward has to be in the message, not just the changelog.
+	if !strings.Contains(err.Error(), "--allow-literal-secrets") {
+		t.Errorf("error should state the escape hatch, got: %v", err)
+	}
+}
+
+// An upgrade that leaves an operator with no way forward is its own
+// incident. Both overrides restore the previous behaviour, loudly.
+func TestLiteralSecretsEscapeHatch(t *testing.T) {
+	t.Setenv("PG_REPL_PASSWORD", "x")
+	t.Setenv("SEC_REPL_PASSWORD", "y")
+	path := writeTempConfig(t, literalSecretConfig)
+
+	t.Run("flag", func(t *testing.T) {
+		SetAllowLiteralSecrets(true)
+		t.Cleanup(func() { SetAllowLiteralSecrets(false) })
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("--allow-literal-secrets should permit the load: %v", err)
+		}
+		if cfg.Primary.Postgres.Password != "plaintext-password" {
+			t.Errorf("password = %q", cfg.Primary.Postgres.Password)
+		}
+		// The audit helper still reports it regardless of the override.
+		if CheckSecretsAreEnvRefs(cfg) == nil {
+			t.Error("CheckSecretsAreEnvRefs should still report the literal")
+		}
+	})
+
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("SYNCCTL_ALLOW_LITERAL_SECRETS", "1")
+		if _, err := Load(path); err != nil {
+			t.Fatalf("env override should permit the load: %v", err)
+		}
+	})
+}
+
+const literalSecretConfig = `
 primary:
   name: p
   external_url: https://p.example.com
@@ -606,23 +654,7 @@ secondaries:
       host: 10.1.0.10
       replication_password: ${SEC_REPL_PASSWORD}
 `
-	t.Setenv("PG_REPL_PASSWORD", "x")
-	t.Setenv("SEC_REPL_PASSWORD", "y")
-	// A literal secret is a warning, not a load failure: refusing to
-	// start would break a running deployment on upgrade, and for a
-	// disaster-recovery tool an unstartable binary is its own incident.
-	cfg, err := Load(writeTempConfig(t, yaml))
-	if err != nil {
-		t.Fatalf("Load should still succeed: %v", err)
-	}
-	if cfg.Primary.Postgres.Password != "plaintext-password" {
-		t.Errorf("password = %q", cfg.Primary.Postgres.Password)
-	}
-	// The enforcing variant still reports it, for callers that want to gate.
-	if err := CheckSecretsAreEnvRefs(cfg); err == nil {
-		t.Error("CheckSecretsAreEnvRefs should still report the literal")
-	}
-}
+
 func TestValidatePaths(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -768,12 +800,12 @@ func TestValidateWebhookTLS(t *testing.T) {
 	}
 }
 
-// The default stays :9101. Changing it to loopback would silently stop
-// existing scrapers on upgrade; warnMetricsExposed says what it costs.
-func TestMetricsAddrDefaultIsUnchanged(t *testing.T) {
+// 1.0 moves the default to loopback: /metrics has no authentication.
+// Widening it is now a deliberate, reviewable config choice.
+func TestMetricsAddrDefaultsToLoopback(t *testing.T) {
 	c := &Config{}
 	_ = c.validate()
-	if c.Metrics.Addr != ":9101" {
-		t.Errorf("metrics.addr = %q, want :9101", c.Metrics.Addr)
+	if c.Metrics.Addr != "127.0.0.1:9101" {
+		t.Errorf("metrics.addr = %q, want 127.0.0.1:9101", c.Metrics.Addr)
 	}
 }

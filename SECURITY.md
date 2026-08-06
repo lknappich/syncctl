@@ -102,7 +102,7 @@ postgres:
 
 | Listener | Default | Auth | Notes |
 |---|---|---|---|
-| `/metrics`, `/healthz` | `:9101` (all interfaces) | none | Exposes site names, replication lag, drift counters. Binds all interfaces by default and warns when it does — set `metrics.addr: 127.0.0.1:9101` and scrape over a private network. |
+| `/metrics`, `/healthz` | `127.0.0.1:9101` | none | Exposes site names, replication lag, drift counters. Loopback since 1.0; widening `metrics.addr` is deliberate and warns. |
 | `/webhook`, `/healthz` | `webhook.addr` | GitLab secret token | Serve over TLS. |
 
 ### Webhook receiver
@@ -139,19 +139,22 @@ All secrets should be read from environment variables via `${VAR}`
 expansion. The config loader rejects any `${VAR}` reference that is unset
 or empty.
 
-A **literal** secret in a field tagged `env:"required"` is reported as a
-warning naming the field, and the load continues:
+A **literal** secret in a field tagged `env:"required"` is rejected at
+load, naming every offending field:
 
 ```
-WARN primary.postgres.password must be an environment reference such as ${MY_SECRET}, not a literal value
-WARN secrets are stored as literals in the config file; move them to
-     environment variables — this will become a load error in the next major version
+primary.postgres.password must be an environment reference such as ${MY_SECRET}, not a literal value
+
+Move these values to environment variables and reference them as ${VAR},
+or pass --allow-literal-secrets (or SYNCCTL_ALLOW_LITERAL_SECRETS=1) while you migrate
 ```
 
-Refusing to load would break a running deployment on upgrade, and for a
-disaster-recovery tool an unstartable binary is its own incident. The
-rejection lands in the next major version; move your secrets to the
-environment before then.
+This was a warning throughout 0.2.x, which stated the rejection would
+land in the next major version. It has.
+
+`--allow-literal-secrets` restores the warning for operators mid-migration.
+It logs on every load, so the state cannot be forgotten. It is not
+intended to be permanent.
 
 Secret values are never logged or printed.
 
