@@ -13,6 +13,20 @@ permanently reserves a tag once its release has existed, so it can never
 carry binaries. Everything intended for those versions ships in the next
 release.
 
+## [1.1.0](https://github.com/lknappich/syncctl/compare/v1.0.0...v1.1.0) (2026-08-06)
+
+
+### Features
+
+* **ci:** attest container image provenance ([8782575](https://github.com/lknappich/syncctl/commit/87825757ce2659be0ac6658264d213d25a179e98))
+* **ci:** attest container image provenance ([c9328c9](https://github.com/lknappich/syncctl/commit/c9328c98dd54960e653e5f95ddf5ea5620704912)), closes [#86](https://github.com/lknappich/syncctl/issues/86)
+
+
+### Documentation
+
+* **security:** say which releases carry image attestation ([ce256dd](https://github.com/lknappich/syncctl/commit/ce256ddc0794b1fb8dc7f48536b3e947084c2e67))
+* **security:** say which releases carry image attestation ([70739d7](https://github.com/lknappich/syncctl/commit/70739d70da09130a885dbca9d81c8e4250977984))
+
 ## [1.0.0](https://github.com/lknappich/syncctl/compare/v0.2.2...v1.0.0) (2026-08-06)
 
 
