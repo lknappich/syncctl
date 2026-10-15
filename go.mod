@@ -1,6 +1,6 @@
 module github.com/lknappich/syncctl
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.3
@@ -13,7 +13,7 @@ require (
 	github.com/prometheus/common v0.70.1
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.24.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
