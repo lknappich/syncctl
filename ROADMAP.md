@@ -22,8 +22,9 @@ Go 1.25 no longer receives fixes, so CI cannot pass `govulncheck` on it.
 Newer modules also require Go 1.26, so Dependabot's PRs cannot go green one at
 a time.
 
-- Require Go 1.26 and build with Go 1.27. This resolves GO-2026-6809 and
-  GO-2026-6617 in the standard library.
+- Require Go 1.26 and build with Go 1.27. This resolves the ten
+  standard-library vulnerabilities `govulncheck` reports on Go 1.25.14, such as
+  GO-2026-6809.
 - Update all modules, which resolves GO-2026-6629 in `golang.org/x/text`.
 - Update pinned actions, CI tools and the base image.
 - Land it as `fix(deps):`. The release config hides `chore`, so a `chore:`
