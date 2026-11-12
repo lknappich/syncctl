@@ -1,0 +1,93 @@
+name: e2e
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      ce_image:
+        description: "Run against this image only (for example gitlab/gitlab-ce:18.5.1-ce.0). Empty resolves the current and previous CE minors."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+# Actions are pinned to a full commit SHA, as in ci.yml.
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - name: Pick the newest patch of the two newest CE minors
+        id: pick
+        env:
+          OVERRIDE: ${{ inputs.ce_image }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            jq -cn --arg image "$OVERRIDE" '{include: [{name: "override", image: $image}]}' > matrix.json
+            echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          url='https://hub.docker.com/v2/repositories/gitlab/gitlab-ce/tags?page_size=100&ordering=last_updated&name=-ce.0'
+          : > tags.txt
+          for _ in 1 2 3 4 5; do
+            page=$(curl -fsS --retry 3 "$url")
+            echo "$page" | jq -r '.results[].name' >> tags.txt
+            url=$(echo "$page" | jq -r '.next // empty')
+            [ -n "$url" ] || break
+          done
+          grep -E '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' tags.txt | sort -uV > releases.txt
+          minors=$(sed -E 's/^([0-9]+\.[0-9]+)\..*/\1/' releases.txt | sort -uV | tail -n 2)
+          [ "$(echo "$minors" | wc -l)" -eq 2 ] || { echo "fewer than two CE minors found"; exit 1; }
+          previous=$(echo "$minors" | sed -n 1p)
+          current=$(echo "$minors" | sed -n 2p)
+          newest() { awk -v m="$1." 'index($0, m) == 1' releases.txt | tail -n 1; }
+          jq -cn \
+            --arg c "gitlab/gitlab-ce:$(newest "$current")" \
+            --arg p "gitlab/gitlab-ce:$(newest "$previous")" \
+            '{include: [{name: "current", image: $c}, {name: "previous", image: $p}]}' > matrix.json
+          cat matrix.json
+          echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    name: e2e (${{ matrix.name }}, ${{ matrix.image }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: true
+      - name: Pull image
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker pull "$IMAGE"
+      - name: Run end-to-end tests
+        env:
+          E2E_GITLAB_IMAGE: ${{ matrix.image }}
+        run: go test -tags e2e -count=1 -timeout 55m -v ./test/e2e/... 2>&1 | tee e2e.log
+        shell: bash
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e-log-${{ matrix.name }}
+          path: e2e.log
+          if-no-files-found: ignore

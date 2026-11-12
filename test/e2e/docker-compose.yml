@@ -1,0 +1,75 @@
+# Two Omnibus CE instances on one network. gl-a is the primary; gl-b is the
+# secondary and runs only PostgreSQL and sshd until a later scenario promotes
+# it. Settings follow GitLab's public documentation for memory-constrained
+# environments and for Omnibus PostgreSQL configuration (gitlab.rb).
+#
+# Required: GITLAB_IMAGE, for example gitlab/gitlab-ce:18.5.1-ce.0
+# The harness in this directory brings this up; running it by hand is only
+# useful for debugging.
+
+x-common: &common
+  image: ${GITLAB_IMAGE:?set GITLAB_IMAGE to a gitlab/gitlab-ce tag}
+  shm_size: 256m
+  networks: [e2e]
+
+services:
+  gl-a:
+    <<: *common
+    container_name: gl-a
+    hostname: gl-a
+    environment:
+      GITLAB_ROOT_PASSWORD: ${E2E_ROOT_PASSWORD:-e2e-Root-Passw0rd-1}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gl-a'
+        letsencrypt['enable'] = false
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        gitlab_rails['usage_ping_enabled'] = false
+        gitaly['env'] = { 'GITALY_COMMAND_SPAWN_MAX_PARALLEL' => '2' }
+        postgresql['listen_address'] = '0.0.0.0'
+        postgresql['port'] = 5432
+        postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
+        postgresql['wal_level'] = 'replica'
+        postgresql['max_wal_senders'] = 10
+        postgresql['max_replication_slots'] = 4
+        postgresql['custom_pg_hba_entries'] = {
+          'syncctl-e2e' => [
+            { type: 'host', database: 'replication', user: 'gitlab_repl', cidr: '0.0.0.0/0', method: 'md5' }
+          ]
+        }
+
+  gl-b:
+    <<: *common
+    container_name: gl-b
+    hostname: gl-b
+    # The harness copies gitlab-secrets.json from gl-a and then creates
+    # /tmp/e2e-go. Starting the image's own entrypoint only after that means
+    # the first reconfigure already runs with the primary's secrets.
+    command:
+      - /bin/sh
+      - -c
+      - 'while [ ! -f /tmp/e2e-go ]; do sleep 1; done; exec /assets/wrapper'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gl-b'
+        letsencrypt['enable'] = false
+        gitlab_rails['auto_migrate'] = false
+        nginx['enable'] = false
+        puma['enable'] = false
+        sidekiq['enable'] = false
+        gitaly['enable'] = false
+        gitlab_workhorse['enable'] = false
+        redis['enable'] = false
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        postgresql['listen_address'] = '0.0.0.0'
+        postgresql['port'] = 5432
+        postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
+        postgresql['wal_level'] = 'replica'
+        postgresql['max_wal_senders'] = 10
+        postgresql['max_replication_slots'] = 4
+
+networks:
+  e2e: {}
