@@ -167,7 +167,7 @@ make coverage   # go test -race -coverprofile=coverage.txt ./...
 make vuln       # govulncheck ./...
 ```
 
-Requires Go 1.24+. A `docker-compose` dev stack is provided under
+Requires Go 1.26+. A `docker-compose` dev stack is provided under
 `deployments/dev` for end-to-end testing.
 
 ## License
