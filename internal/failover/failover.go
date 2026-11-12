@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +35,7 @@ type Controller struct {
 	force         bool
 	wipePGData    bool
 	client        *http.Client
+	out           io.Writer
 
 	// Replaced in tests to drive the health-check loop without HTTP or SSH.
 	healthFailures func(context.Context) int
@@ -62,6 +65,7 @@ func New(cfg *config.Config, dryRun bool) *Controller {
 		autoFailover:  false,
 		dryRun:        dryRun,
 		client:        &http.Client{Timeout: 5 * time.Second},
+		out:           os.Stdout,
 	}
 	fc.healthFailures = fc.countHealthFailures
 	fc.promote = fc.Promote
@@ -269,7 +273,7 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 	for _, step := range steps {
 		log.Info().Str("step", step.name).Msg("failover step")
 		if c.dryRun {
-			fmt.Printf("[dry-run] step: %s\n", step.name)
+			fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
 			continue
 		}
 		if err := step.fn(ctx); err != nil {
@@ -280,14 +284,35 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 
 	log.Info().Str("secondary", secondaryName).
 		Msg("failover complete — secondary is now primary")
-	fmt.Println("\n=== POST-FAILOVER RUNBOOK ===")
-	fmt.Println("1. Update DNS to point to the new primary:", secondary.ExternalURL)
-	fmt.Println("2. Re-point CI runners to the new primary coordinator URL")
-	fmt.Println("3. Update any integrations that reference the old primary URL")
-	fmt.Println("4. When the old primary recovers, run: syncctl adopt-as-secondary --secondary", c.cfg.Primary.Name)
-	fmt.Println("5. Verify webhook secrets and access tokens work (behavioral check)")
-
+	c.printPostFailoverRunbook(secondary)
 	return nil
+}
+
+func (c *Controller) printPostFailoverRunbook(promoted *config.SiteConfig) {
+	oldPrimarySSH := "<old-primary-host:port>"
+	if c.cfg.Primary.SSHHost != "" {
+		oldPrimarySSH = shellquote.Quote(c.cfg.Primary.SSHHost)
+	}
+	w := c.out
+	fmt.Fprintln(w, "\n=== POST-FAILOVER RUNBOOK ===")
+	fmt.Fprintln(w, "1. Update DNS to point to the new primary:", promoted.ExternalURL)
+	fmt.Fprintln(w, "2. Re-point CI runners to the new primary coordinator URL")
+	fmt.Fprintln(w, "3. Update any integrations that reference the old primary URL")
+	fmt.Fprintf(w, "4. When the old primary recovers, run: syncctl adopt-as-secondary --new-primary %s --old-primary-ssh %s\n",
+		shellquote.Quote(promoted.Name), oldPrimarySSH)
+	fmt.Fprintln(w, "5. Verify webhook secrets and access tokens work (behavioral check)")
+
+	var others []string
+	for _, s := range c.cfg.Secondaries {
+		if s.Name != promoted.Name {
+			others = append(others, s.Name)
+		}
+	}
+	if len(others) > 0 {
+		fmt.Fprintf(w, "6. Secondaries %s still replicate from the old primary %s; syncctl does not re-point them. "+
+			"Re-point each to %s (or re-base it with pg_basebackup) before relying on it\n",
+			strings.Join(others, ", "), c.cfg.Primary.Name, promoted.Name)
+	}
 }
 
 // promotionSteps is the ordered promotion sequence.
@@ -373,7 +398,7 @@ func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH, newPri
 	for _, step := range steps {
 		log.Info().Str("step", step.name).Msg("role-swap step")
 		if c.dryRun {
-			fmt.Printf("[dry-run] step: %s\n", step.name)
+			fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
 			continue
 		}
 		if err := step.fn(ctx); err != nil {
