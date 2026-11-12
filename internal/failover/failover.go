@@ -139,8 +139,11 @@ func (c *Controller) check(ctx context.Context) {
 // Every tick of an outage declares the primary down again, and re-running
 // the sequence each time stopped GitLab on a secondary that was mid-promotion
 // or already serving as the new primary. A failed attempt is retried only
-// once the primary has recovered and failed again. A completed one never is:
-// the configured secondary is now the primary.
+// once the primary has recovered and failed again. A completed one is not
+// repeated for the lifetime of this process: the configured secondary is now
+// the primary. The latch is in memory only, so a restart resets it; a
+// persistent precondition check belongs with the idempotent-steps work in
+// ROADMAP 1.2 item 2.
 func (c *Controller) autoPromote(ctx context.Context) {
 	target, err := c.autoFailoverTarget()
 	if err != nil {
@@ -154,7 +157,9 @@ func (c *Controller) autoPromote(ctx context.Context) {
 	log.Error().Str("secondary", target).Msg("primary declared down; auto-failover triggered")
 	if err := c.promote(ctx, target); err != nil {
 		c.promotion.Store(promotionFailed)
-		log.Error().Err(err).Msg("auto-failover failed; not retrying until the primary recovers and fails again")
+		log.Error().Err(err).Str("secondary", target).Msgf(
+			"auto-failover failed; it will not retry until the primary recovers and fails again; "+
+				"to retry now run `syncctl failover --secondary %s --yes`", shellquote.Quote(target))
 		return
 	}
 	c.promotion.Store(promotionDone)
