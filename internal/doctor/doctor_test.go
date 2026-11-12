@@ -676,3 +676,7 @@ func TestDBKeyPresentCheckFailsWhenAbsent(t *testing.T) {
 		t.Errorf("Status = %q, want FAIL", got.Status)
 	}
 }
+
+func (m *mockRunner) Output(ctx context.Context, host, cmd string) ([]byte, error) {
+	return m.CombinedOutput(ctx, host, cmd)
+}

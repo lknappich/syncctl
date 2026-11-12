@@ -14,11 +14,17 @@ type fakeRunner struct {
 	err map[string]error
 }
 
-func (f fakeRunner) CombinedOutput(_ context.Context, host, cmd string) ([]byte, error) {
+func (f fakeRunner) Output(_ context.Context, host, cmd string) ([]byte, error) {
 	if cmd != SecretsCmd {
 		return nil, fmt.Errorf("unexpected cmd %q", cmd)
 	}
 	return []byte(f.out[host]), f.err[host]
+}
+
+// CombinedOutput mimics ssh: stderr noise is merged into the output. The
+// package must never use it for reading the secrets file.
+func (f fakeRunner) CombinedOutput(_ context.Context, host, cmd string) ([]byte, error) {
+	return []byte("Warning: Permanently added host\n" + f.out[host]), f.err[host]
 }
 
 func run(t *testing.T, a, b string) (Result, error) {
@@ -103,5 +109,37 @@ func TestNoSecretLeaks(t *testing.T) {
 	_, err = Compare(context.Background(), f, "a.example", "b.example")
 	if err == nil || strings.Contains(err.Error(), "TOPSECRET") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestStderrNoiseIgnored(t *testing.T) {
+	j := `{"a":"1"}`
+	r, err := run(t, j, j) // CombinedOutput of the fake would be corrupted
+	if err != nil || !r.Equal() {
+		t.Fatalf("got %+v %v", r, err)
+	}
+}
+
+func TestPathCollision(t *testing.T) {
+	_, err := run(t, `{"a.b":"1","a":{"b":"2"}}`, `{}`)
+	if err == nil || strings.Contains(err.Error(), "1") && strings.Contains(err.Error(), "2") {
+		t.Fatalf("err=%v", err)
+	}
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+}
+
+func TestControlCharKeyRejected(t *testing.T) {
+	_, err := run(t, "{\"a\\nb\":\"SECRETVAL\"}", `{}`)
+	if err == nil || strings.Contains(err.Error(), "SECRETVAL") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNumericLiteralsDiffer(t *testing.T) {
+	r, err := run(t, `{"n":1}`, `{"n":1.0}`)
+	if err != nil || !reflect.DeepEqual(r.Differ, []string{"n"}) {
+		t.Fatalf("got %+v %v", r, err)
 	}
 }
