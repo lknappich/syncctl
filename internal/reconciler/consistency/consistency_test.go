@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -78,45 +79,63 @@ func TestIsApproxEqual(t *testing.T) {
 	}
 }
 
-// mockQuerier implements rowQuerier.
+// mockQuerier answers rowCount's aggregate query as Postgres would, so a
+// missing table yields a row with zero relations rather than no row.
 type mockQuerier struct {
-	counts map[string]int64
-	err    error
+	counts     map[string]int64
+	partitions map[string][]int64
+	err        error
+	sql        string
 }
 
 func (m *mockQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	m.sql = sql
 	if m.err != nil {
 		return &mockRow{err: m.err}
 	}
 	table, _ := args[0].(string)
-	count, ok := m.counts[table]
-	if !ok {
-		return &mockRow{err: pgx.ErrNoRows}
+	if leaves, ok := m.partitions[table]; ok {
+		return &mockRow{relations: int64(1 + len(leaves)), leaves: leaves}
 	}
-	return &mockRow{count: count}
+	if count, ok := m.counts[table]; ok {
+		return &mockRow{relations: 1, leaves: []int64{count}}
+	}
+	return &mockRow{}
 }
 
 type mockRow struct {
-	count int64
-	err   error
+	relations int64
+	leaves    []int64
+	err       error
 }
 
 func (r *mockRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	*(dest[0].(*int64)) = r.count
+	if len(dest) != 2 {
+		return fmt.Errorf("mockRow: scanned into %d targets, want 2", len(dest))
+	}
+	*(dest[0].(*int64)) = r.relations
+	*(dest[1].(*[]int64)) = r.leaves
 	return nil
 }
 
+func allTables(n int64) map[string]int64 {
+	m := make(map[string]int64, len(tablesToCount))
+	for _, table := range tablesToCount {
+		m[table] = n
+	}
+	return m
+}
+
 func TestReconcileAllMatch(t *testing.T) {
-	counts := map[string]int64{"projects": 100, "namespaces": 50}
-	primary := &mockQuerier{counts: counts}
-	secondary := &mockQuerier{counts: counts}
+	primary := &mockQuerier{counts: allTables(100)}
+	secondary := &mockQuerier{counts: allTables(100)}
 	r := (&Reconciler{reposPath: ""}).WithPools(primary, secondary)
 	res := r.Reconcile(context.Background())
-	if !res.OK {
-		t.Errorf("expected OK, got: %s", res.Detail)
+	if !res.OK || res.Remaining != 0 {
+		t.Errorf("expected OK with nothing remaining, got remaining=%d: %s", res.Remaining, res.Detail)
 	}
 }
 
@@ -164,13 +183,100 @@ func TestReconcileSecondaryError(t *testing.T) {
 }
 
 func TestReconcileTableMissing(t *testing.T) {
-	// Missing table returns pgx.ErrNoRows -> rowCount returns (0, nil).
-	primary := &mockQuerier{counts: map[string]int64{}}
-	secondary := &mockQuerier{counts: map[string]int64{}}
+	empty := &mockQuerier{}
+	r := (&Reconciler{reposPath: ""}).WithPools(empty, empty)
+	res := r.Reconcile(context.Background())
+	if res.Remaining != len(tablesToCount) {
+		t.Errorf("Remaining = %d, want %d: a missing table must not compare as 0 == 0", res.Remaining, len(tablesToCount))
+	}
+	want := "p_ci_builds primary count error: " + errTableNotFound.Error()
+	if !strings.Contains(res.Detail, want) {
+		t.Errorf("Detail lacks %q: %s", want, res.Detail)
+	}
+}
+
+func TestTablesToCountUsesPartitionedCITables(t *testing.T) {
+	want := map[string]bool{"p_ci_builds": true, "p_ci_pipelines": true}
+	for _, table := range tablesToCount {
+		if table == "ci_builds" || table == "ci_pipelines" {
+			t.Errorf("tablesToCount has %q; CE keeps those rows under the partitioned p_%s", table, table)
+		}
+		delete(want, table)
+	}
+	for table := range want {
+		t.Errorf("tablesToCount lacks %q", table)
+	}
+}
+
+func TestReconcileDetectsDriftInPartitionedCITables(t *testing.T) {
+	primary := &mockQuerier{counts: allTables(100), partitions: map[string][]int64{
+		"p_ci_builds": {5000, 5000}, "p_ci_pipelines": {800},
+	}}
+	secondary := &mockQuerier{counts: allTables(100), partitions: map[string][]int64{
+		"p_ci_builds": {5000, 0}, "p_ci_pipelines": {800},
+	}}
 	r := (&Reconciler{reposPath: ""}).WithPools(primary, secondary)
 	res := r.Reconcile(context.Background())
-	if !res.OK {
-		t.Errorf("expected OK when tables missing, got: %s", res.Detail)
+	if res.OK || !strings.Contains(res.Detail, "p_ci_builds drift: primary=10000 secondary=5000") {
+		t.Errorf("expected p_ci_builds drift, got OK=%v: %s", res.OK, res.Detail)
+	}
+}
+
+func TestRowCountMissingTableIsError(t *testing.T) {
+	n, err := rowCount(context.Background(), &mockQuerier{}, "p_ci_builds")
+	if !errors.Is(err, errTableNotFound) {
+		t.Fatalf("rowCount on a missing table = %d, %v; want errTableNotFound", n, err)
+	}
+}
+
+func TestRowCountPlainTable(t *testing.T) {
+	q := &mockQuerier{counts: map[string]int64{"projects": 42, "users": -1}}
+	if n, err := rowCount(context.Background(), q, "projects"); n != 42 || err != nil {
+		t.Errorf("rowCount(projects) = %d, %v; want 42, nil", n, err)
+	}
+	if _, err := rowCount(context.Background(), q, "users"); !errors.Is(err, errCountUnknown) {
+		t.Errorf("rowCount(users) error = %v; want errCountUnknown", err)
+	}
+}
+
+func TestRowCountSumsLeafPartitions(t *testing.T) {
+	tests := []struct {
+		name    string
+		leaves  []int64
+		want    int64
+		wantErr error
+	}{
+		{"sums every leaf", []int64{1000, 200, 30}, 1230, nil},
+		{"skips a never-analyzed leaf", []int64{1000, -1, 30}, 1030, nil},
+		{"unknown when no leaf is analyzed", []int64{-1, -1}, 0, errCountUnknown},
+		{"no partitions holds no rows", nil, 0, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &mockQuerier{partitions: map[string][]int64{"p_ci_builds": tc.leaves}}
+			got, err := rowCount(context.Background(), q, "p_ci_builds")
+			if got != tc.want || !errors.Is(err, tc.wantErr) {
+				t.Errorf("rowCount = %d, %v; want %d, %v", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRowCountQueryWalksPartitionTree(t *testing.T) {
+	q := &mockQuerier{counts: map[string]int64{"projects": 1}}
+	if _, err := rowCount(context.Background(), q, "projects"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"WITH RECURSIVE",
+		"c.relkind IN ('r', 'p')",
+		"JOIN pg_inherits i ON i.inhparent = t.oid",
+		"WHERE t.relkind = 'p'",
+		"FILTER (WHERE relkind = 'r')",
+	} {
+		if !strings.Contains(q.sql, want) {
+			t.Errorf("rowCount query lacks %q:\n%s", want, q.sql)
+		}
 	}
 }
 
