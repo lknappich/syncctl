@@ -51,7 +51,8 @@ func TestComparePostgres(t *testing.T) {
 		{"primary query error", boom, pg("160004"), StatusFail, "primary: query"},
 		{"secondary query error", pg("160004"), boom, StatusFail, "secondary: query"},
 		{"unparsable", pg("abc"), pg("160004"), StatusFail, "unparsable"},
-		{"too small", pg("42"), pg("160004"), StatusFail, "unparsable"},
+		{"too small", pg("42"), pg("160004"), StatusFail, "< 10 unsupported"},
+		{"pg9", pg("90624"), pg("160004"), StatusFail, "< 10 unsupported"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,6 +103,9 @@ func TestCompareGitLab(t *testing.T) {
 		{"unparsable primary", run("oops", "gitlab-ce 16.5.1"), "p.example", "s.example", StatusFail, "primary: unparsable"},
 		{"unparsable secondary", run("gitlab-ce 16.5.1", ""), "p.example", "s.example", StatusFail, "secondary: unparsable"},
 		{"ssh error", fakeRunner{err: map[string]error{"s.example": errors.New("refused")}, out: map[string]string{"p.example": "16.5.1"}}, "p.example", "s.example", StatusFail, "secondary: ssh s.example: refused"},
+		{"ssh warning line", run("Warning: Permanently added 'p' (ED25519) to the list of known hosts.\ngitlab-ce 16.5.1\n", "gitlab-ce 16.5.1"), "p.example", "s.example", StatusOK, "matches"},
+		{"edition mismatch", run("gitlab-ce 16.5.1", "gitlab-ee 16.5.1"), "p.example", "s.example", StatusFail, "edition mismatch"},
+		{"edition unknown on one side", run("gitlab-ce 16.5.1", "16.5.1"), "p.example", "s.example", StatusWarn, "edition"},
 		{"bad host", run("16.5.1", "16.5.1"), "-oProxyCommand=x", "s.example", StatusFail, "primary:"},
 	}
 	for _, tt := range tests {
@@ -111,6 +115,13 @@ func TestCompareGitLab(t *testing.T) {
 				t.Fatalf("got %s %q, want %s containing %q", r.Status, r.Message, tt.want, tt.sub)
 			}
 		})
+	}
+}
+
+func TestRunNilDeps(t *testing.T) {
+	rep := Run(context.Background(), Sites{})
+	if len(rep.Results) != 2 || rep.Worst() != StatusFail {
+		t.Fatalf("unexpected: %+v", rep)
 	}
 }
 

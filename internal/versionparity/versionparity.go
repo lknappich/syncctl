@@ -6,9 +6,10 @@
 //
 // GitLab's version is read over SSH from the Omnibus version manifest,
 // /opt/gitlab/version-manifest.txt, whose first line has the form
-// "gitlab-ce 16.5.1" (or "gitlab-ee ..."); this file is documented in
-// GitLab's public Omnibus docs as the way to read the installed version
-// from the command line. PostgreSQL's version comes from the standard
+// "gitlab-ce 16.5.1" (or "gitlab-ee ..."). The file is documented in
+// GitLab's public docs (https://docs.gitlab.com/administration/package_information/,
+// "Checking the versions of bundled software"); the first-line format is
+// observed on installs, not documented. PostgreSQL's version comes from the standard
 // `SHOW server_version_num` statement.
 package versionparity
 
@@ -76,31 +77,37 @@ func (v GitLabVersion) String() string {
 	return s
 }
 
-var gitlabLineRe = regexp.MustCompile(`^\s*(?:gitlab-(ce|ee)\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+.]?(ce|ee))?`)
+var gitlabLineRe = regexp.MustCompile(`^\s*(?:gitlab-(ce|ee)\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+.]?(ce|ee)(?:\.\d+)?)?(?:\s|$)`)
 
-// ParseGitLabVersion parses the first line of the Omnibus manifest, e.g.
-// "gitlab-ce 16.5.1", "gitlab-ee 16.5.1" or a bare "16.5.1" / "16.5.1-ce".
+// truncate trims s and shortens it to at most n bytes for error messages.
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
+// ParseGitLabVersion scans the SSH output for the first line that looks
+// like the Omnibus manifest header, e.g. "gitlab-ce 16.5.1",
+// "gitlab-ee 16.5.1" or a bare "16.5.1" / "16.5.1-ce". Other lines (such
+// as ssh's "Warning: Permanently added ..." on stderr) are skipped.
 func ParseGitLabVersion(out string) (GitLabVersion, error) {
-	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
-	m := gitlabLineRe.FindStringSubmatch(line)
-	if m == nil {
-		return GitLabVersion{}, fmt.Errorf("unparsable GitLab version %q", strings.TrimSpace(line))
+	for _, line := range strings.Split(out, "\n") {
+		m := gitlabLineRe.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if m == nil {
+			continue
+		}
+		v := GitLabVersion{Edition: m[1]}
+		if v.Edition == "" {
+			v.Edition = m[5]
+		}
+		v.Major, _ = strconv.Atoi(m[2])
+		v.Minor, _ = strconv.Atoi(m[3])
+		v.Patch, _ = strconv.Atoi(m[4])
+		return v, nil
 	}
-	v := GitLabVersion{Edition: m[1]}
-	if v.Edition == "" {
-		v.Edition = m[5]
-	}
-	var err error
-	if v.Major, err = strconv.Atoi(m[2]); err != nil {
-		return GitLabVersion{}, fmt.Errorf("unparsable GitLab version %q: %w", line, err)
-	}
-	if v.Minor, err = strconv.Atoi(m[3]); err != nil {
-		return GitLabVersion{}, fmt.Errorf("unparsable GitLab version %q: %w", line, err)
-	}
-	if v.Patch, err = strconv.Atoi(m[4]); err != nil {
-		return GitLabVersion{}, fmt.Errorf("unparsable GitLab version %q: %w", line, err)
-	}
-	return v, nil
+	return GitLabVersion{}, fmt.Errorf("unparsable GitLab version output %q", truncate(out, 200))
 }
 
 // PostgresMajor reads server_version_num and returns the major version.
@@ -110,8 +117,11 @@ func PostgresMajor(ctx context.Context, q Querier) (int, error) {
 		return 0, fmt.Errorf("query server_version_num: %w", err)
 	}
 	num, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || num < 10000 {
-		return 0, fmt.Errorf("unparsable server_version_num %q", raw)
+	if err != nil || num < 100000 {
+		if err == nil {
+			return 0, fmt.Errorf("PostgreSQL < 10 unsupported (server_version_num %d)", num)
+		}
+		return 0, fmt.Errorf("unparsable server_version_num %q", truncate(raw, 200))
 	}
 	return num / 10000, nil
 }
@@ -140,7 +150,7 @@ func FetchGitLabVersion(ctx context.Context, host string, runner sshexec.Runner)
 	}
 	out, err := runner.CombinedOutput(ctx, host, gitlabVersionCmd)
 	if err != nil {
-		return GitLabVersion{}, fmt.Errorf("ssh %s: %w", host, err)
+		return GitLabVersion{}, fmt.Errorf("ssh %s: %w (output: %q)", host, err, truncate(string(out), 200))
 	}
 	return ParseGitLabVersion(string(out))
 }
@@ -160,6 +170,10 @@ func CompareGitLab(ctx context.Context, primarySSH, secondarySSH string, runner 
 	switch {
 	case p.Major != s.Major || p.Minor != s.Minor:
 		return fail(CheckGitLab, "GitLab version mismatch: primary %s, secondary %s (major.minor must match)", p, s)
+	case p.Edition != "" && s.Edition != "" && p.Edition != s.Edition:
+		return fail(CheckGitLab, "GitLab edition mismatch: primary %s, secondary %s", p, s)
+	case (p.Edition == "") != (s.Edition == ""):
+		return Result{CheckGitLab, StatusWarn, fmt.Sprintf("GitLab edition could not be compared: primary %s, secondary %s", p, s)}
 	case p.Patch != s.Patch:
 		return Result{CheckGitLab, StatusWarn, fmt.Sprintf("GitLab patch version differs: primary %s, secondary %s", p, s)}
 	}
@@ -194,6 +208,12 @@ type Sites struct {
 
 // Run performs the PostgreSQL and GitLab comparisons.
 func Run(ctx context.Context, s Sites) Report {
+	if s.PrimaryDB == nil || s.SecondaryDB == nil || s.Runner == nil {
+		return Report{Results: []Result{
+			fail(CheckPostgres, "version parity not run: missing database connection or SSH runner"),
+			fail(CheckGitLab, "version parity not run: missing database connection or SSH runner"),
+		}}
+	}
 	return Report{Results: []Result{
 		ComparePostgres(ctx, s.PrimaryDB, s.SecondaryDB),
 		CompareGitLab(ctx, s.PrimarySSH, s.SecondarySSH, s.Runner),
