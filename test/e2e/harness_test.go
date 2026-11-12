@@ -121,10 +121,27 @@ func syncctl(ctx context.Context, user string, args ...string) (string, error) {
 }
 
 func homeFor(user string) string {
-	if user == "gitlab-psql" {
+	switch user {
+	case "gitlab-psql":
 		return pgSocketDir
+	case "syncctl":
+		return "/home/syncctl"
 	}
 	return "/root"
+}
+
+// requireEnv reports whether a missing prerequisite must fail the run instead
+// of skipping it, so CI cannot go green without having tested anything.
+func requireEnv() bool {
+	return os.Getenv("CI") == "true" || os.Getenv("E2E_REQUIRE") == "1"
+}
+
+func skipOrFail(t *testing.T, msg string) {
+	t.Helper()
+	if requireEnv() {
+		t.Fatal(msg)
+	}
+	t.Skip(msg)
 }
 
 // knownFailures maps a subtest name to the roadmap reference explaining why
@@ -207,9 +224,9 @@ func syncctlConfig() string {
 		}
 		return b.String()
 	}
-	secondaryBlock := site("    ", secondary, "127.0.0.1", "root@127.0.0.1:22")
+	secondaryBlock := site("    ", secondary, "127.0.0.1", "syncctl@127.0.0.1:22")
 	secondaryBlock = "  -" + secondaryBlock[3:]
-	return "primary:\n" + site("  ", primary, primary, "root@"+primary+":22") +
+	return "primary:\n" + site("  ", primary, primary, "syncctl@"+primary+":22") +
 		"secondaries:\n" + secondaryBlock +
 		`ssh:
   strict_host_key_checking: "no"

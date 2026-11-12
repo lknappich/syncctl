@@ -25,7 +25,7 @@ The first boot takes 5 to 15 minutes while GitLab reconfigures.
 
 ```sh
 E2E_GITLAB_IMAGE=gitlab/gitlab-ce:18.5.1-ce.0 \
-  go test -tags e2e -timeout 55m -v ./test/e2e/...
+  go test -tags e2e -timeout 45m -v ./test/e2e/...
 ```
 
 Without `E2E_GITLAB_IMAGE`, or without Docker, the test skips.

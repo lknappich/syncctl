@@ -83,8 +83,15 @@ jobs:
       - name: Run end-to-end tests
         env:
           E2E_GITLAB_IMAGE: ${{ matrix.image }}
-        run: go test -tags e2e -count=1 -timeout 55m -v ./test/e2e/... 2>&1 | tee e2e.log
+        run: go test -tags e2e -count=1 -timeout 45m -v ./test/e2e/... 2>&1 | tee e2e.log
         shell: bash
+      - name: Dump container logs
+        if: failure()
+        env:
+          GITLAB_IMAGE: ${{ matrix.image }}
+        run: |
+          docker ps -a || true
+          docker compose -p syncctl-e2e -f test/e2e/docker-compose.yml logs --no-color --tail 300 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

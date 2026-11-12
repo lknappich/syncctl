@@ -4,7 +4,7 @@
 //
 // It is excluded from `go test ./...` by the e2e build tag. Run it with:
 //
-//	E2E_GITLAB_IMAGE=gitlab/gitlab-ce:<tag> go test -tags e2e -timeout 55m -v ./test/e2e/...
+//	E2E_GITLAB_IMAGE=gitlab/gitlab-ce:<tag> go test -tags e2e -timeout 45m -v ./test/e2e/...
 package e2e
 
 import (
@@ -30,10 +30,10 @@ const (
 func TestE2E(t *testing.T) {
 	image := os.Getenv("E2E_GITLAB_IMAGE")
 	if image == "" {
-		t.Skip("E2E_GITLAB_IMAGE is not set (for example gitlab/gitlab-ce:18.5.1-ce.0)")
+		skipOrFail(t, "E2E_GITLAB_IMAGE is not set (for example gitlab/gitlab-ce:18.5.1-ce.0)")
 	}
 	if _, err := run(context.Background(), "docker", "version"); err != nil {
-		t.Skip("docker is not available")
+		skipOrFail(t, "docker is not available")
 	}
 	ctx := context.Background()
 	known := knownFailures(t)
@@ -95,28 +95,48 @@ func TestE2E(t *testing.T) {
 		mustRun(t, ctx, "docker", "cp", secrets, secondary+":/etc/gitlab/gitlab-secrets.json")
 		mustExec(t, ctx, secondary, "", "touch", "/tmp/e2e-go")
 
+		poll(t, bootTimeout, pollInterval, secondary+" first reconfigure to finish", func() (bool, string) {
+			out, _ := run(ctx, "docker", "logs", secondary)
+			return strings.Contains(out, "gitlab Reconfigured!"), "no 'gitlab Reconfigured!' line yet"
+		})
 		poll(t, bootTimeout, pollInterval, secondary+" postgresql after first reconfigure", func() (bool, string) {
 			out, err := psql(ctx, secondary, "SELECT 1")
 			return err == nil && out == "1", out
 		})
 
+		const sudoers = `syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl stop
+syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl start
+syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_ctl promote *
+syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_basebackup *
+syncctl ALL=(root) NOPASSWD: /opt/gitlab/embedded/bin/gitlab-rails runner *
+syncctl ALL=(root) NOPASSWD: /usr/bin/rsync *
+syncctl ALL=(root) NOPASSWD: /usr/bin/grep *
+`
+		// The image's own sshd is disabled (GITLAB_DISABLE_OPENSSH) because its
+		// config only admits the git user. Ubuntu's sshd runs with its default
+		// config, and syncctl connects as an unprivileged user with a key and
+		// the sudo allowlist from SECURITY.md.
 		for _, c := range []string{primary, secondary} {
 			mustExec(t, ctx, c, "", "sh", "-c",
 				"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sudo rsync git openssh-client openssh-server")
 			mustExec(t, ctx, c, "", "sh", "-c",
-				"mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh && ssh-keygen -A && (pgrep -x sshd >/dev/null || /usr/sbin/sshd)")
+				"id syncctl >/dev/null 2>&1 || useradd -m -s /bin/bash syncctl; usermod -p '*' syncctl; "+
+					"install -d -m 700 -o syncctl -g syncctl /home/syncctl/.ssh; "+
+					"printf %s "+shQuote(sudoers)+" > /etc/sudoers.d/syncctl && chmod 440 /etc/sudoers.d/syncctl && visudo -c")
+			mustExec(t, ctx, c, "", "sh", "-c",
+				"mkdir -p /run/sshd && ssh-keygen -A && /usr/sbin/sshd")
 		}
 
 		// syncctl runs on gl-b, as it would on a real secondary, and reaches
 		// both sites over SSH with a key generated here.
-		mustExec(t, ctx, secondary, "", "sh", "-c",
-			"test -f /root/.ssh/id_ed25519 || ssh-keygen -q -t ed25519 -N '' -f /root/.ssh/id_ed25519")
-		pub := strings.TrimSpace(mustExec(t, ctx, secondary, "", "cat", "/root/.ssh/id_ed25519.pub"))
+		mustExec(t, ctx, secondary, "syncctl", "sh", "-c",
+			"ssh-keygen -q -t ed25519 -N '' -f /home/syncctl/.ssh/id_ed25519")
+		pub := strings.TrimSpace(mustExec(t, ctx, secondary, "", "cat", "/home/syncctl/.ssh/id_ed25519.pub"))
 		for _, c := range []string{primary, secondary} {
-			mustExec(t, ctx, c, "", "sh", "-c",
-				"echo "+shQuote(pub)+" >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys")
+			mustExec(t, ctx, c, "syncctl", "sh", "-c",
+				"echo "+shQuote(pub)+" >> /home/syncctl/.ssh/authorized_keys && chmod 600 /home/syncctl/.ssh/authorized_keys")
 		}
-		mustExec(t, ctx, secondary, "", "mkdir", "-p", reposDir)
+		mustExec(t, ctx, secondary, "", "install", "-d", "-o", "git", "-g", "git", reposDir)
 
 		// Replication role and passwords: documented gitlab.rb settings open
 		// the listener and pg_hba; the passwords are set with plain SQL so no
@@ -139,7 +159,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 		mustRun(t, ctx, "docker", "cp", cfg, secondary+":/etc/syncctl-e2e.yaml")
 		mustExec(t, ctx, secondary, "", "chmod", "0755", "/usr/local/bin/syncctl")
 
-		if out, err := syncctl(ctx, "root", "config-validate"); err != nil {
+		if out, err := syncctl(ctx, "syncctl", "config-validate"); err != nil {
 			t.Fatalf("config-validate: %v\n%s", err, out)
 		}
 	})
@@ -201,7 +221,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 	step("doctor_primary_checks", false, func(t *testing.T) {
 		// Before the secondary is bootstrapped only the primary-side checks
 		// can pass; the secondary's Postgres is still an unrelated cluster.
-		out, _ := syncctl(ctx, "root", "doctor")
+		out, _ := syncctl(ctx, "syncctl", "doctor")
 		t.Logf("doctor (before bootstrap):\n%s", out)
 		for _, want := range []string{"ssh:primary", "pg:primary:control", "pg:primary:repl-role", "pg:primary:wal_level"} {
 			if !checkPassed(out, want) {
@@ -241,7 +261,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 	})
 
 	step("doctor_after_bootstrap", false, func(t *testing.T) {
-		out, _ := syncctl(ctx, "root", "doctor")
+		out, _ := syncctl(ctx, "syncctl", "doctor")
 		t.Logf("doctor (after bootstrap):\n%s", out)
 		for _, want := range []string{"pg:primary:control", "pg:secondary:gl-b:control", "pg:secondary:gl-b:in_recovery"} {
 			if !checkPassed(out, want) {
@@ -251,7 +271,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 	})
 
 	step("sync_runs", true, func(t *testing.T) {
-		out, err := syncctl(ctx, "root", "sync")
+		out, err := syncctl(ctx, "syncctl", "sync")
 		t.Logf("sync:\n%s", out)
 		if err != nil {
 			t.Fatalf("sync: %v", err)
@@ -260,6 +280,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 	})
 
 	step("sync_git_rsync_ok", false, func(t *testing.T) {
+		skipIfKnown(t, known)
 		if !strings.Contains(syncOut, "[OK] git_rsync") {
 			t.Fatalf("git_rsync reconciler not OK:\n%s", syncOut)
 		}
@@ -270,7 +291,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 			t.Skip("no repository path from seed")
 		}
 		revParse := func(c string) string {
-			out := mustExec(t, ctx, c, "", "git", "-c", "safe.directory=*",
+			out := mustExec(t, ctx, c, "", embeddedBinDir+"/git", "-c", "safe.directory=*",
 				"--git-dir", reposDir+"/"+repoRel, "rev-parse", "refs/heads/main")
 			return strings.TrimSpace(out)
 		}

@@ -18,12 +18,13 @@ services:
     container_name: gl-a
     hostname: gl-a
     environment:
+      GITLAB_DISABLE_OPENSSH: "true"
       GITLAB_ROOT_PASSWORD: ${E2E_ROOT_PASSWORD:-e2e-Root-Passw0rd-1}
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://gl-a'
         letsencrypt['enable'] = false
         puma['worker_processes'] = 0
-        sidekiq['concurrency'] = 5
+        sidekiq['concurrency'] = 10
         prometheus_monitoring['enable'] = false
         gitlab_kas['enable'] = false
         gitlab_rails['usage_ping_enabled'] = false
@@ -32,6 +33,7 @@ services:
         postgresql['port'] = 5432
         postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
         postgresql['wal_level'] = 'replica'
+        postgresql['hot_standby'] = 'on'
         postgresql['max_wal_senders'] = 10
         postgresql['max_replication_slots'] = 4
         postgresql['custom_pg_hba_entries'] = {
@@ -45,13 +47,14 @@ services:
     container_name: gl-b
     hostname: gl-b
     # The harness copies gitlab-secrets.json from gl-a and then creates
-    # /tmp/e2e-go. Starting the image's own entrypoint only after that means
+    # /tmp/e2e-go. Starting the image's own init (CMD /assets/init-container) only after that means
     # the first reconfigure already runs with the primary's secrets.
     command:
       - /bin/sh
       - -c
-      - 'while [ ! -f /tmp/e2e-go ]; do sleep 1; done; exec /assets/wrapper'
+      - 'while [ ! -f /tmp/e2e-go ]; do sleep 1; done; exec /assets/init-container'
     environment:
+      GITLAB_DISABLE_OPENSSH: "true"
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://gl-b'
         letsencrypt['enable'] = false
@@ -68,6 +71,7 @@ services:
         postgresql['port'] = 5432
         postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
         postgresql['wal_level'] = 'replica'
+        postgresql['hot_standby'] = 'on'
         postgresql['max_wal_senders'] = 10
         postgresql['max_replication_slots'] = 4
 
