@@ -165,10 +165,12 @@ type SyncConfig struct {
 	// Interval for periodic full reconciliation sweeps.
 	SweepInterval time.Duration `yaml:"sweep_interval"`
 
-	// LagWarningThreshold: emit a warning if PG replay lag exceeds this.
+	// LagWarningThreshold: emit a warning if PG replay lag is at or
+	// above this. Must be less than LagCriticalThreshold.
 	LagWarningThreshold time.Duration `yaml:"lag_warning_threshold"`
 
-	// LagCriticalThreshold: emit critical + page (via DriftTotal) above.
+	// LagCriticalThreshold: emit critical + page (via DriftTotal) if PG
+	// replay lag is at or above this.
 	LagCriticalThreshold time.Duration `yaml:"lag_critical_threshold"`
 
 	// FailoverEnabled: if true, syncctl failover is permitted (requires
@@ -554,6 +556,7 @@ func (c *Config) validate() error {
 	if c.Sync.LagCriticalThreshold == 0 {
 		c.Sync.LagCriticalThreshold = 5 * time.Minute
 	}
+	c.validateLagThresholds(&errs)
 	if c.Metrics.Addr == "" {
 		// Loopback by default as of 1.0: /metrics has no authentication
 		// and exposes site names, replication lag and drift counters.
@@ -585,6 +588,21 @@ func (c *Config) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateLagThresholds runs after defaults are filled in, so a threshold
+// left unset is compared at its default value.
+func (c *Config) validateLagThresholds(errs *[]error) {
+	warn, crit := c.Sync.LagWarningThreshold, c.Sync.LagCriticalThreshold
+	if warn < 0 {
+		*errs = append(*errs, fmt.Errorf("sync.lag_warning_threshold %s must not be negative", warn))
+	}
+	if crit < 0 {
+		*errs = append(*errs, fmt.Errorf("sync.lag_critical_threshold %s must not be negative", crit))
+	}
+	if warn >= 0 && crit >= 0 && warn >= crit {
+		*errs = append(*errs, fmt.Errorf("sync.lag_warning_threshold (%s) must be less than sync.lag_critical_threshold (%s)", warn, crit))
+	}
 }
 
 // validateSSHHosts rejects an ssh_host that cannot be parsed into a
