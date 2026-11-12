@@ -408,11 +408,12 @@ func newPGSetupCmd(g *globalFlags) *cobra.Command {
 			defer cancel()
 			dsn, password := cfg.Primary.Postgres.ReplicationConnInfo()
 			return pgsetup.Run(ctx, pgsetup.Options{
-				PrimaryDSN: dsn,
-				Password:   password,
-				DataDir:    dataDir,
-				SlotName:   sc.Postgres.SlotName,
-				DryRun:     g.dryRun,
+				PrimaryDSN:      dsn,
+				Password:        password,
+				DataDir:         dataDir,
+				SlotName:        sc.Postgres.SlotName,
+				ApplicationName: sc.Name,
+				DryRun:          g.dryRun,
 			})
 		},
 	}

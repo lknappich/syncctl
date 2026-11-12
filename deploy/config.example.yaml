@@ -56,6 +56,9 @@ primary:
   ssh_host: primary.example.com:22
 
 secondaries:
+  # Site names double as the standby's Postgres application_name, which
+  # `pg setup` writes and lag monitoring matches on: up to 63 printable
+  # ASCII characters, no whitespace, quotes or backslashes.
   - name: secondary-us
     external_url: https://gitlab.secondary.example.com
     postgres:
