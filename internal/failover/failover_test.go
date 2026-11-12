@@ -2,10 +2,13 @@ package failover
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lknappich/syncctl/internal/config"
@@ -549,4 +552,175 @@ func TestAdoptAsSecondaryRefusesAmbiguousNewPrimary(t *testing.T) {
 	if !strings.Contains(err.Error(), "--new-primary") {
 		t.Errorf("error should name the flag, got: %v", err)
 	}
+}
+
+const testTick = 10 * time.Second
+
+type countingPromoter struct {
+	calls   atomic.Int64
+	release chan struct{} // when set, each call blocks until it is closed
+	err     error
+}
+
+func (p *countingPromoter) promote(ctx context.Context, target string) error {
+	p.calls.Add(1)
+	if target != "s" {
+		return errors.New("unexpected target " + target)
+	}
+	if p.release != nil {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return p.err
+}
+
+// startAutoFailover runs the real health-check loop on the synctest fake
+// clock, with health checks that fail while down is set. advance(n) moves
+// the clock across exactly n ticks and waits for the loop to handle them.
+func startAutoFailover(t *testing.T, p *countingPromoter) (fc *Controller, down *atomic.Bool, advance func(ticks int)) {
+	t.Helper()
+	down = new(atomic.Bool)
+	fc = New(&config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com"},
+		Secondaries: []config.SiteConfig{{Name: "s"}},
+		Failover: &config.FailoverConfig{
+			AutoFailover:        true,
+			QuorumRequired:      1,
+			HealthCheckInterval: testTick,
+		},
+	}, false)
+	fc.healthFailures = func(context.Context) int {
+		if down.Load() {
+			return 1
+		}
+		return 0
+	}
+	fc.promote = p.promote
+	go fc.Run(t.Context())
+	// Sit between tick boundaries so no tick races a change to down.
+	time.Sleep(testTick / 2)
+	return fc, down, func(n int) {
+		time.Sleep(time.Duration(n) * testTick)
+		synctest.Wait()
+	}
+}
+
+// A dry run of 8 ticks with the primary down used to start 6 promotion
+// sequences: every tick past the third re-ran the whole sequence.
+func TestAutoFailoverPromotesOncePerOutage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &countingPromoter{}
+		fc, down, advance := startAutoFailover(t, p)
+		down.Store(true)
+		advance(2)
+		if n := p.calls.Load(); n != 0 {
+			t.Fatalf("promoted after 2 failed checks (%d), want none before 3", n)
+		}
+		advance(18)
+		if n := p.calls.Load(); n != 1 {
+			t.Errorf("promotions over 20 ticks with the primary down = %d, want 1", n)
+		}
+		if !fc.IsPrimaryDown() {
+			t.Error("primary should be reported down")
+		}
+	})
+}
+
+func TestAutoFailoverDoesNotRestartAPromotionInProgress(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &countingPromoter{release: make(chan struct{})}
+		fc, down, advance := startAutoFailover(t, p)
+		down.Store(true)
+		advance(3)
+		if n := p.calls.Load(); n != 1 {
+			t.Fatalf("promotions started = %d, want 1", n)
+		}
+
+		// Ticks keep coming while the sequence runs: through the loop,
+		// and from concurrent callers, including one seeing a recovery.
+		advance(5)
+		go fc.check(t.Context())
+		synctest.Wait()
+		down.Store(false)
+		go fc.check(t.Context())
+		synctest.Wait()
+		down.Store(true)
+		for range 3 {
+			go fc.check(t.Context())
+			synctest.Wait()
+		}
+		if n := p.calls.Load(); n != 1 {
+			t.Fatalf("a tick during the running promotion started another (%d started)", n)
+		}
+
+		close(p.release)
+		advance(10)
+		if n := p.calls.Load(); n != 1 {
+			t.Errorf("promotions after the sequence finished = %d, want 1", n)
+		}
+	})
+}
+
+func TestAutoFailoverRecoveryBeforeThresholdDoesNotPromote(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &countingPromoter{}
+		fc, down, advance := startAutoFailover(t, p)
+		for range 5 {
+			down.Store(true)
+			advance(2)
+			down.Store(false)
+			advance(1)
+		}
+		if n := p.calls.Load(); n != 0 {
+			t.Fatalf("promoted %d times though the primary never failed 3 checks in a row", n)
+		}
+		if fc.IsPrimaryDown() {
+			t.Fatal("primary should not be declared down")
+		}
+		down.Store(true)
+		advance(3)
+		if n := p.calls.Load(); n != 1 {
+			t.Errorf("promotions after a real outage = %d, want 1", n)
+		}
+	})
+}
+
+// The promoted secondary is the primary now; promoting it again would stop
+// the site that is serving.
+func TestAutoFailoverNeverRepeatsACompletedPromotion(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &countingPromoter{}
+		_, down, advance := startAutoFailover(t, p)
+		down.Store(true)
+		advance(5)
+		down.Store(false)
+		advance(2)
+		down.Store(true)
+		advance(5)
+		if n := p.calls.Load(); n != 1 {
+			t.Errorf("promotions = %d, want 1", n)
+		}
+	})
+}
+
+func TestAutoFailoverRetriesAFailedPromotionOnlyInTheNextOutage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &countingPromoter{err: errors.New("ssh: connection refused")}
+		_, down, advance := startAutoFailover(t, p)
+		down.Store(true)
+		advance(10)
+		if n := p.calls.Load(); n != 1 {
+			t.Fatalf("attempts during one outage = %d, want 1", n)
+		}
+		down.Store(false)
+		advance(1)
+		down.Store(true)
+		advance(10)
+		if n := p.calls.Load(); n != 2 {
+			t.Errorf("attempts after a second outage = %d, want 2", n)
+		}
+	})
 }
