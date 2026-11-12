@@ -31,7 +31,7 @@ type fakeRunner struct {
 	err map[string]error
 }
 
-func (f fakeRunner) CombinedOutput(_ context.Context, host, _ string) ([]byte, error) {
+func (f fakeRunner) Output(_ context.Context, host, _ string) ([]byte, error) {
 	if e := f.err[host]; e != nil {
 		return nil, e
 	}
@@ -138,4 +138,8 @@ func TestRunAndWorst(t *testing.T) {
 	if rep.Worst() != StatusFail || (Report{}).Worst() != StatusOK {
 		t.Fatal("Worst wrong")
 	}
+}
+
+func (f fakeRunner) CombinedOutput(ctx context.Context, host, cmd string) ([]byte, error) {
+	return f.Output(ctx, host, cmd)
 }

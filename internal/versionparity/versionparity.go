@@ -148,7 +148,7 @@ func FetchGitLabVersion(ctx context.Context, host string, runner sshexec.Runner)
 	if err := sshexec.CheckHost(host); err != nil {
 		return GitLabVersion{}, err
 	}
-	out, err := runner.CombinedOutput(ctx, host, gitlabVersionCmd)
+	out, err := runner.Output(ctx, host, gitlabVersionCmd)
 	if err != nil {
 		return GitLabVersion{}, fmt.Errorf("ssh %s: %w (output: %q)", host, err, truncate(string(out), 200))
 	}
