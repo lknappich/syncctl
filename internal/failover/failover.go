@@ -34,10 +34,22 @@ type Controller struct {
 	wipePGData    bool
 	client        *http.Client
 
+	// Replaced in tests to drive the health-check loop without HTTP or SSH.
+	healthFailures func(context.Context) int
+	promote        func(context.Context, string) error
+
 	// State.
 	primaryDown      atomic.Bool
 	consecutiveFails atomic.Int64
+	promotion        atomic.Int32
 }
+
+const (
+	promotionIdle int32 = iota
+	promotionRunning
+	promotionFailed
+	promotionDone
+)
 
 // New creates a failover controller from config.
 func New(cfg *config.Config, dryRun bool) *Controller {
@@ -51,6 +63,8 @@ func New(cfg *config.Config, dryRun bool) *Controller {
 		dryRun:        dryRun,
 		client:        &http.Client{Timeout: 5 * time.Second},
 	}
+	fc.healthFailures = fc.countHealthFailures
+	fc.promote = fc.Promote
 	if cfg.Failover != nil {
 		fc.healthURLs = append(fc.healthURLs, cfg.Failover.HealthCheckURLs...)
 		fc.quorum = cfg.Failover.QuorumRequired
@@ -95,7 +109,7 @@ func (c *Controller) Run(ctx context.Context) {
 
 // check polls all health URLs and determines if the primary is down.
 func (c *Controller) check(ctx context.Context) {
-	fails := c.countHealthFailures(ctx)
+	fails := c.healthFailures(ctx)
 	if fails >= c.quorum {
 		c.consecutiveFails.Add(1)
 		down := c.consecutiveFails.Load()
@@ -105,15 +119,7 @@ func (c *Controller) check(ctx context.Context) {
 		if down >= 3 {
 			c.primaryDown.Store(true)
 			if c.autoFailover {
-				target, err := c.autoFailoverTarget()
-				if err != nil {
-					log.Error().Err(err).Msg("auto-failover cannot proceed")
-					return
-				}
-				log.Error().Str("secondary", target).Msg("primary declared down; auto-failover triggered")
-				if err := c.Promote(ctx, target); err != nil {
-					log.Error().Err(err).Msg("auto-failover failed")
-				}
+				c.autoPromote(ctx)
 			} else {
 				log.Error().Msg("primary declared down; auto-failover disabled — run `syncctl failover` manually")
 			}
@@ -124,7 +130,39 @@ func (c *Controller) check(ctx context.Context) {
 		}
 		c.consecutiveFails.Store(0)
 		c.primaryDown.Store(false)
+		c.promotion.CompareAndSwap(promotionFailed, promotionIdle)
 	}
+}
+
+// autoPromote runs the promotion sequence at most once per outage.
+//
+// Every tick of an outage declares the primary down again, and re-running
+// the sequence each time stopped GitLab on a secondary that was mid-promotion
+// or already serving as the new primary. A failed attempt is retried only
+// once the primary has recovered and failed again. A completed one is not
+// repeated for the lifetime of this process: the configured secondary is now
+// the primary. The latch is in memory only, so a restart resets it; a
+// persistent precondition check belongs with the idempotent-steps work in
+// ROADMAP 1.2 item 2.
+func (c *Controller) autoPromote(ctx context.Context) {
+	target, err := c.autoFailoverTarget()
+	if err != nil {
+		log.Error().Err(err).Msg("auto-failover cannot proceed")
+		return
+	}
+	if !c.promotion.CompareAndSwap(promotionIdle, promotionRunning) {
+		log.Debug().Msg("auto-failover promotion is running or already ran; not starting another")
+		return
+	}
+	log.Error().Str("secondary", target).Msg("primary declared down; auto-failover triggered")
+	if err := c.promote(ctx, target); err != nil {
+		c.promotion.Store(promotionFailed)
+		log.Error().Err(err).Str("secondary", target).Msgf(
+			"auto-failover failed; it will not retry until the primary recovers and fails again; "+
+				"to retry now run `syncctl failover --secondary %s --yes`", shellquote.Quote(target))
+		return
+	}
+	c.promotion.Store(promotionDone)
 }
 
 // countHealthFailures polls every health URL and returns how many did
