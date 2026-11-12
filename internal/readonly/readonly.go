@@ -1,13 +1,13 @@
 // Package readonly suppresses writes on a secondary GitLab instance via
 // SSH. It does this by:
 //   - putting the container registry into read-only mode so no pushes
-//     land on the replica,
+//     land on the replica, and
 //   - pausing Sidekiq so no background jobs run on the secondary while it
-//     is a replica, and
-//   - clearing the writable repository storage list so the application
-//     will not place new repositories on the replica.
+//     is a replica.
 //
-// All three are standard GitLab omnibus administration, available on CE.
+// Both are standard GitLab omnibus administration, available on CE.
+// Application settings are left alone: they live in the replicated
+// database, which rejects writes while the secondary is a standby.
 // We deliberately do not use GitLab's Maintenance Mode, which is a paid
 // Premium/Ultimate feature.
 //
@@ -28,7 +28,6 @@ import (
 // Enable applies the write-suppression measures to the secondary:
 //  1. Start the registry read-only filter.
 //  2. Pause Sidekiq (no job processing on the replica).
-//  3. Clear repository_storages so no new repositories are placed here.
 func Enable(ctx context.Context, sshHost string, dryRun bool) error {
 	return EnableWithConfig(ctx, sshHost, dryRun, sshexec.Default)
 }
@@ -38,7 +37,6 @@ func EnableWithConfig(ctx context.Context, sshHost string, dryRun bool, sshCfg s
 	for _, cmd := range []string{
 		"sudo gitlab-ctl deploy-registry-readonly start",
 		"sudo gitlab-ctl sidekiq pause",
-		"sudo gitlab-rails runner 'ApplicationSetting.current.update!(repository_storages: [])' 2>/dev/null || true",
 	} {
 		if err := runSSH(ctx, sshHost, dryRun, sshCfg, cmd); err != nil {
 			return err
@@ -58,7 +56,6 @@ func DisableWithConfig(ctx context.Context, sshHost string, dryRun bool, sshCfg 
 	for _, cmd := range []string{
 		"sudo gitlab-ctl deploy-registry-readonly stop",
 		"sudo gitlab-ctl sidekiq resume",
-		"sudo gitlab-rails runner 'ApplicationSetting.current.update!(repository_storages: nil)' 2>/dev/null || true",
 	} {
 		if err := runSSH(ctx, sshHost, dryRun, sshCfg, cmd); err != nil {
 			return err
