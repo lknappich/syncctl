@@ -35,7 +35,7 @@ import (
 // SecretsCmd is the remote command used to read the file. It is a
 // root-owned file, hence sudo -n (fail fast if the sudoers rule is missing;
 // see the SECURITY.md sudo table).
-const SecretsCmd = "sudo -n cat /etc/gitlab/gitlab-secrets.json"
+const SecretsCmd = "sudo -n cat /etc/gitlab/gitlab-secrets.json" //nolint:gosec // G101 false positive: a file path in a command, not a credential
 
 // Result lists key paths only. It never contains values or digests.
 type Result struct {
