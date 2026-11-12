@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/lknappich/syncctl/internal/localcmd"
 )
@@ -338,6 +339,8 @@ type mockRows struct {
 	idx    int
 }
 
+var _ pgx.Rows = (*mockRows)(nil)
+
 func (m *mockRows) Next() bool {
 	if m.idx >= len(m.rows) {
 		return false
@@ -375,6 +378,7 @@ func (m *mockRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
 func (m *mockRows) Values() ([]any, error)                       { return nil, nil }
 func (m *mockRows) RawValues() [][]byte                          { return nil }
 func (m *mockRows) Conn() *pgx.Conn                              { return nil }
+func (m *mockRows) TypeMap() *pgtype.Map                         { return pgtype.NewMap() }
 
 // End-to-end through the sweep: a project whose route path escapes the
 // repositories root must be skipped without running git, and must not
