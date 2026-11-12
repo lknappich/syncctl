@@ -483,6 +483,9 @@ func TestReconcileReplicationRowNotFound(t *testing.T) {
 	if !strings.Contains(res.Detail, "replay lag unknown") {
 		t.Errorf("Detail = %q, want it to say replay lag is unknown", res.Detail)
 	}
+	if !strings.Contains(res.Detail, "primary_conninfo") {
+		t.Errorf("Detail = %q, want a hint about primary_conninfo", res.Detail)
+	}
 	if got := gaugeValue(t, "s1"); got != -1 {
 		t.Errorf("lag gauge = %v, want -1", got)
 	}
@@ -492,6 +495,7 @@ func TestReconcileReplicationRowNotFound(t *testing.T) {
 }
 
 func TestReconcileNegativeLagIsNotHealthy(t *testing.T) {
+	criticalBefore := counterValue(t, "critical")
 	r := &Reconciler{
 		primary:     lagPool(-1),
 		secondaries: []secondaryConn{{name: "s1", pool: lagPool(0)}},
@@ -511,6 +515,9 @@ func TestReconcileNegativeLagIsNotHealthy(t *testing.T) {
 	}
 	if got := gaugeValue(t, "s1"); got != -1 {
 		t.Errorf("lag gauge = %v, want -1", got)
+	}
+	if got := counterValue(t, "critical") - criticalBefore; got != 1 {
+		t.Errorf("critical drift_total delta = %v, want 1", got)
 	}
 }
 

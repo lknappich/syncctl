@@ -113,7 +113,7 @@ func (r *Reconciler) Name() string { return name }
 // Reconcile queries replication status on both sides and reports lag.
 // Lag at or above the warning threshold stays OK but is logged; lag at
 // or above the critical threshold, or lag that cannot be measured, is
-// drift. A zero threshold disables that check.
+// drift.
 func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 	var result reconciler.Result
 	var notes []string
@@ -172,10 +172,11 @@ func (r *Reconciler) checkSecondary(ctx context.Context, sc secondaryConn) (time
 	var lagSec float64
 	err = row.Scan(&lagSec)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, fmt.Errorf("no pg_stat_replication row on primary for application_name %q (replay lag unknown)", sc.name)
+		return 0, fmt.Errorf("no pg_stat_replication row on primary for application_name %q "+
+			"(replay lag unknown; check application_name in the secondary's primary_conninfo)", sc.name)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("primary has no replication row for %s: %w", sc.name, err)
+		return 0, fmt.Errorf("query replay lag for %s: %w", sc.name, err)
 	}
 	if lagSec < 0 {
 		return 0, fmt.Errorf("primary reported negative replay lag %gs (replay lag unknown)", lagSec)

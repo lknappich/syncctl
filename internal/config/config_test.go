@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeTempConfig writes a YAML file in a temp dir and returns its path.
@@ -807,5 +808,50 @@ func TestMetricsAddrDefaultsToLoopback(t *testing.T) {
 	_ = c.validate()
 	if c.Metrics.Addr != "127.0.0.1:9101" {
 		t.Errorf("metrics.addr = %q, want 127.0.0.1:9101", c.Metrics.Addr)
+	}
+}
+
+func TestValidateLagThresholds(t *testing.T) {
+	tests := []struct {
+		name    string
+		sync    SyncConfig
+		wantErr string
+	}{
+		{name: "defaults", sync: SyncConfig{}},
+		{name: "custom ordered", sync: SyncConfig{LagWarningThreshold: 10 * time.Second, LagCriticalThreshold: time.Minute}},
+		{name: "only critical set", sync: SyncConfig{LagCriticalThreshold: time.Hour}},
+		{name: "negative warning", sync: SyncConfig{LagWarningThreshold: -time.Second},
+			wantErr: "sync.lag_warning_threshold -1s must not be negative"},
+		{name: "negative critical", sync: SyncConfig{LagCriticalThreshold: -time.Second},
+			wantErr: "sync.lag_critical_threshold -1s must not be negative"},
+		{name: "warning equals critical", sync: SyncConfig{LagWarningThreshold: time.Minute, LagCriticalThreshold: time.Minute},
+			wantErr: "must be less than sync.lag_critical_threshold"},
+		{name: "warning above critical", sync: SyncConfig{LagWarningThreshold: 2 * time.Minute, LagCriticalThreshold: time.Minute},
+			wantErr: "must be less than sync.lag_critical_threshold"},
+		{name: "warning above default critical", sync: SyncConfig{LagWarningThreshold: 10 * time.Minute},
+			wantErr: "sync.lag_warning_threshold (10m0s) must be less than sync.lag_critical_threshold (5m0s)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Sync: tc.sync}
+			err := c.validate()
+			var lagErrs []string
+			if err != nil {
+				for _, line := range strings.Split(err.Error(), "\n") {
+					if strings.Contains(line, "lag_") {
+						lagErrs = append(lagErrs, line)
+					}
+				}
+			}
+			if tc.wantErr == "" {
+				if len(lagErrs) != 0 {
+					t.Fatalf("unexpected lag threshold errors: %v", lagErrs)
+				}
+				return
+			}
+			if len(lagErrs) != 1 || !strings.Contains(lagErrs[0], tc.wantErr) {
+				t.Errorf("lag threshold errors = %q, want exactly one containing %q", lagErrs, tc.wantErr)
+			}
+		})
 	}
 }
