@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/sshexec"
 )
@@ -707,7 +709,7 @@ func findCheck(t *testing.T, checks []Check, name string) Check {
 }
 
 func TestPGSlotWALChecksUnlimitedWithSlot(t *testing.T) {
-	pool := slotPool("-1", "s1|reserved|2048", nil)
+	pool := slotPool("-1", "s1|true|reserved|2048", nil)
 	checks := pgSlotWALChecks(context.Background(), "primary",
 		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
 	c := findCheck(t, checks, "pg:primary:max_slot_wal_keep_size")
@@ -715,7 +717,7 @@ func TestPGSlotWALChecksUnlimitedWithSlot(t *testing.T) {
 		t.Errorf("got %s: %s", c.Status, c.Detail)
 	}
 	s := findCheck(t, checks, "pg:primary:slot:s1")
-	if s.Status != "PASS" || !strings.Contains(s.Detail, "retained=2048 bytes") {
+	if s.Status != "PASS" || !strings.Contains(s.Detail, "retained=2.0 KiB") {
 		t.Errorf("slot check = %s: %s", s.Status, s.Detail)
 	}
 }
@@ -739,7 +741,7 @@ func TestPGSlotWALChecksUnlimitedNoSlot(t *testing.T) {
 }
 
 func TestPGSlotWALChecksLimited(t *testing.T) {
-	pool := slotPool("10GB", "s1|reserved|1", nil)
+	pool := slotPool("10GB", "s1|true|reserved|1", nil)
 	checks := pgSlotWALChecks(context.Background(), "primary",
 		config.PostgresConfig{Host: "h"}, true, fakePoolFactory(pool))
 	if c := findCheck(t, checks, "pg:primary:max_slot_wal_keep_size"); c.Status != "PASS" {
@@ -748,7 +750,7 @@ func TestPGSlotWALChecksLimited(t *testing.T) {
 }
 
 func TestPGSlotWALChecksWalStatus(t *testing.T) {
-	pool := slotPool("1GB", "a|extended|1\nb|unreserved|2\nc|lost|3\nd||", nil)
+	pool := slotPool("1GB", "a|true|extended|1\nb|true|unreserved|2\nc|true|lost|3\nd|true||", nil)
 	checks := pgSlotWALChecks(context.Background(), "primary",
 		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
 	want := map[string]string{"a": "PASS", "b": "WARN", "c": "WARN", "d": "PASS"}
@@ -770,13 +772,67 @@ func TestPGSlotWALChecksConnectError(t *testing.T) {
 	}
 }
 
+func TestPGSlotWALChecksInactiveSlot(t *testing.T) {
+	pool := slotPool("-1", "s1|false|reserved|5368709120", nil)
+	checks := pgSlotWALChecks(context.Background(), "primary",
+		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
+	s := findCheck(t, checks, "pg:primary:slot:s1")
+	if s.Status != "WARN" || !strings.Contains(s.Detail, "inactive") ||
+		!strings.Contains(s.Detail, "5.0 GiB") || !strings.Contains(s.Detail, "unbounded") {
+		t.Errorf("slot check = %s: %s", s.Status, s.Detail)
+	}
+}
+
+func TestPGSlotWALChecksKeepZero(t *testing.T) {
+	pool := slotPool("0", "s1|true|reserved|1", nil)
+	checks := pgSlotWALChecks(context.Background(), "primary",
+		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
+	c := findCheck(t, checks, "pg:primary:max_slot_wal_keep_size")
+	if c.Status != "WARN" || !strings.Contains(c.Detail, "=0") {
+		t.Errorf("got %s: %s", c.Status, c.Detail)
+	}
+}
+
+func TestPGSlotWALChecksStandby(t *testing.T) {
+	pool := slotPool("-1", slotsOnStandby, nil)
+	checks := pgSlotWALChecks(context.Background(), "primary",
+		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
+	c := findCheck(t, checks, "pg:primary:slots")
+	if c.Status != "WARN" || !strings.Contains(c.Detail, "standby") {
+		t.Errorf("got %s: %s", c.Status, c.Detail)
+	}
+}
+
+func TestPGSlotWALChecksUnparseableRow(t *testing.T) {
+	pool := slotPool("1GB", "garbage\ns1|true|reserved|1", nil)
+	checks := pgSlotWALChecks(context.Background(), "primary",
+		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
+	if c := findCheck(t, checks, "pg:primary:slots"); c.Status != "WARN" || !strings.Contains(c.Detail, "1 slot") {
+		t.Errorf("got %s: %s", c.Status, c.Detail)
+	}
+	findCheck(t, checks, "pg:primary:slot:s1")
+}
+
+func TestPGSlotWALChecksShowUndefinedObject(t *testing.T) {
+	pool := &mockPool{queryRowFn: func(ctx context.Context, sql string, args ...any) Row {
+		return &mockRow{scanFn: func(dest ...any) error {
+			return &pgconn.PgError{Code: "42704", Message: "unrecognized configuration parameter"}
+		}}
+	}}
+	checks := pgSlotWALChecks(context.Background(), "primary",
+		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
+	if !strings.Contains(checks[0].Detail, "PostgreSQL 13+") {
+		t.Errorf("detail = %s", checks[0].Detail)
+	}
+}
+
 func TestPGSlotWALChecksShowError(t *testing.T) {
 	pool := &mockPool{queryRowFn: func(ctx context.Context, sql string, args ...any) Row {
 		return &mockRow{scanFn: func(dest ...any) error { return errors.New("unrecognized parameter") }}
 	}}
 	checks := pgSlotWALChecks(context.Background(), "primary",
 		config.PostgresConfig{Host: "h"}, false, fakePoolFactory(pool))
-	if len(checks) != 1 || checks[0].Status != "WARN" {
+	if len(checks) != 1 || checks[0].Status != "WARN" || strings.Contains(checks[0].Detail, "13+") {
 		t.Errorf("checks = %+v", checks)
 	}
 }
