@@ -29,6 +29,7 @@ services:
         gitlab_kas['enable'] = false
         gitlab_rails['usage_ping_enabled'] = false
         gitaly['env'] = { 'GITALY_COMMAND_SPAWN_MAX_PARALLEL' => '2' }
+        gitlab_rails['db_host'] = '/var/opt/gitlab/postgresql'
         postgresql['listen_address'] = '0.0.0.0'
         postgresql['port'] = 5432
         postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
@@ -67,6 +68,7 @@ services:
         redis['enable'] = false
         prometheus_monitoring['enable'] = false
         gitlab_kas['enable'] = false
+        gitlab_rails['db_host'] = '/var/opt/gitlab/postgresql'
         postgresql['listen_address'] = '0.0.0.0'
         postgresql['port'] = 5432
         postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
