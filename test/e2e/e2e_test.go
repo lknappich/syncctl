@@ -81,6 +81,13 @@ func TestE2E(t *testing.T) {
 	step("boot", true, func(t *testing.T) {
 		mustRun(t, ctx, "docker", "compose", "-p", "syncctl-e2e", "-f", composeFile(), "up", "-d", "--quiet-pull")
 
+		poll(t, bootTimeout, pollInterval, primary+" first reconfigure to finish", func() (bool, string) {
+			if out, _ := run(ctx, "docker", "inspect", "--format", "{{.State.Running}}", primary); strings.TrimSpace(out) != "true" {
+				t.Fatalf("%s is not running; reconfigure failed", primary)
+			}
+			out, _ := run(ctx, "docker", "logs", primary)
+			return strings.Contains(out, "gitlab Reconfigured!"), "no 'gitlab Reconfigured!' line yet"
+		})
 		poll(t, bootTimeout, pollInterval, primary+" healthy", func() (bool, string) {
 			out, err := run(ctx, "docker", "inspect", "--format", "{{.State.Health.Status}}", primary)
 			s := strings.TrimSpace(out)
