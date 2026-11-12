@@ -34,7 +34,7 @@ type rowQuerier interface {
 // tablesToCount are the key GitLab tables whose row counts we compare.
 var tablesToCount = []string{
 	"projects", "namespaces", "users", "merge_requests",
-	"issues", "notes", "ci_builds", "ci_pipelines", "labels", "milestones",
+	"issues", "notes", "p_ci_builds", "p_ci_pipelines", "labels", "milestones",
 }
 
 // Reconciler compares row counts and samples git fsck.
@@ -127,6 +127,32 @@ func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
 // would report drift for every table on a brand-new replica.
 var errCountUnknown = errors.New("row count estimate unavailable")
 
+// errTableNotFound is an error rather than a zero count: a table renamed
+// or partitioned by a CE upgrade would otherwise read as 0 on both sides
+// and compare equal forever.
+var errTableNotFound = errors.New("table not found in schema public")
+
+// The aggregate always returns one row, so count(*) is what tells a
+// missing table apart from an empty one. Partitions are not filtered by
+// schema because they may live outside public.
+const rowCountSQL = `
+	WITH RECURSIVE tree AS (
+		SELECT c.oid, c.relkind, c.reltuples
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = $1
+		  AND c.relkind IN ('r', 'p')
+		  AND n.nspname = 'public'
+		UNION ALL
+		SELECT c.oid, c.relkind, c.reltuples
+		FROM tree t
+		JOIN pg_inherits i ON i.inhparent = t.oid
+		JOIN pg_class c ON c.oid = i.inhrelid
+		WHERE t.relkind = 'p'
+	)
+	SELECT count(*), array_agg(reltuples::bigint) FILTER (WHERE relkind = 'r')
+	FROM tree`
+
 // rowCount returns the approximate row count for a table.
 //
 // reltuples is a planner estimate maintained by ANALYZE, not a count.
@@ -135,26 +161,33 @@ var errCountUnknown = errors.New("row count estimate unavailable")
 // isApproxEqual exists to absorb. The relation is schema-qualified to
 // pg_catalog's notion of the public schema so a same-named table in
 // another schema cannot match instead.
+//
+// A partitioned table's own reltuples is not maintained by autovacuum, so
+// its leaves are summed instead. A leaf still at -1 is skipped rather
+// than making the whole table unknown: an empty partition that has never
+// been written to is never auto-analyzed and would block the comparison
+// indefinitely.
 func rowCount(ctx context.Context, pool rowQuerier, table string) (int64, error) {
-	var n int64
-	err := pool.QueryRow(ctx, `
-		SELECT c.reltuples::bigint
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relname = $1
-		  AND c.relkind = 'r'
-		  AND n.nspname = 'public'
-		LIMIT 1`, table).Scan(&n)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return 0, nil
-		}
+	var relations int64
+	var leaves []int64
+	if err := pool.QueryRow(ctx, rowCountSQL, table).Scan(&relations, &leaves); err != nil {
 		return 0, err
 	}
-	if n < 0 {
+	if relations == 0 {
+		return 0, errTableNotFound
+	}
+	var total int64
+	analyzed := false
+	for _, n := range leaves {
+		if n >= 0 {
+			total += n
+			analyzed = true
+		}
+	}
+	if len(leaves) > 0 && !analyzed {
 		return 0, errCountUnknown
 	}
-	return n, nil
+	return total, nil
 }
 
 // isApproxEqual returns true if two reltuples estimates are close enough
