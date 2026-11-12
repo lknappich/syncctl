@@ -21,7 +21,7 @@ go test ./...
 go vet ./...
 ```
 
-Requires Go 1.25+. A `docker-compose` dev stack (primary + secondary
+Requires Go 1.26+. A `docker-compose` dev stack (primary + secondary
 GitLab + Postgres + MinIO) is provided under `deployments/dev` for
 end-to-end testing of the replication flows.
 
