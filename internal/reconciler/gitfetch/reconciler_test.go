@@ -3,7 +3,6 @@ package gitfetch
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -171,7 +170,7 @@ func (m *mockGitRunner) Run(ctx context.Context, name string, args, env []string
 var _ localcmd.Runner = (*mockGitRunner)(nil)
 
 func TestReconcileNoProjects(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{}}
+	pool := &mockPool{}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool)
 	res := r.Reconcile(context.Background())
 	if !res.OK {
@@ -189,7 +188,7 @@ func TestReconcilePoolError(t *testing.T) {
 }
 
 func TestReconcileFetchOneSuccess(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{{ID: 1, RepoPath: "group/proj.git"}}}
+	pool := &mockPool{projects: []mockProject{{id: 1, route: "group/proj"}}}
 	runner := &mockGitRunner{out: []byte("")}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
 	res := r.Reconcile(context.Background())
@@ -202,7 +201,7 @@ func TestReconcileFetchOneSuccess(t *testing.T) {
 }
 
 func TestReconcileFetchOneFailure(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{{ID: 1, RepoPath: "group/proj.git"}}}
+	pool := &mockPool{projects: []mockProject{{id: 1, route: "group/proj"}}}
 	runner := &mockGitRunner{err: errors.New("fetch failed")}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
 	res := r.Reconcile(context.Background())
@@ -265,7 +264,7 @@ func TestFetchProjectDryRun(t *testing.T) {
 // With hashed storage on, the webhook path must resolve the project ID
 // from the DB and fetch into @hashed/..., not into the legacy route path.
 func TestFetchProjectUsesHashedLayout(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{{ID: 1}}, hashed: true}
+	pool := &mockPool{projects: []mockProject{{id: 1, route: "group/proj"}}, storageVersion: 1}
 	runner := &mockGitRunner{out: []byte("")}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(runner)
 	if err := r.FetchProject(context.TODO(), "group/proj"); err != nil {
@@ -280,8 +279,100 @@ func TestFetchProjectUsesHashedLayout(t *testing.T) {
 	}
 }
 
+// The CE schema has no projects.hashed_storage; selecting it fails every
+// sweep and every webhook fetch with "column does not exist".
+func TestQueriesSelectStorageVersion(t *testing.T) {
+	pool := &mockPool{projects: []mockProject{{id: 1, route: "group/proj"}}}
+	r := (&Reconciler{}).WithPool(pool)
+	_, _ = r.listProjects(context.Background())
+	_, _ = r.resolveProject(context.Background(), "group/proj")
+
+	if len(pool.queries) != 2 {
+		t.Fatalf("expected 2 queries, got %d", len(pool.queries))
+	}
+	for _, q := range pool.queries {
+		if strings.Contains(q, "hashed_storage") {
+			t.Errorf("query selects projects.hashed_storage, which is not in the CE schema:\n%s", q)
+		}
+		if !strings.Contains(q, "p.storage_version") {
+			t.Errorf("query does not select projects.storage_version:\n%s", q)
+		}
+	}
+}
+
+func TestStorageVersionSelectsLayout(t *testing.T) {
+	const route = "group/proj"
+	const hashed = "@hashed/6b/86/6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b.git"
+	for _, tc := range []struct {
+		name           string
+		storageVersion any
+		want           string
+	}{
+		{name: "null", storageVersion: nil, want: route + ".git"},
+		{name: "0", storageVersion: 0, want: route + ".git"},
+		{name: "1", storageVersion: 1, want: hashed},
+		{name: "2", storageVersion: 2, want: hashed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := &mockPool{projects: []mockProject{{id: 1, route: route}}, storageVersion: tc.storageVersion}
+			r := (&Reconciler{}).WithPool(pool)
+
+			projects, err := r.listProjects(context.Background())
+			if err != nil {
+				t.Fatalf("listProjects: %v", err)
+			}
+			if len(projects) != 1 || projects[0].RepoPath != tc.want {
+				t.Errorf("sweep resolved %+v, want RepoPath %q", projects, tc.want)
+			}
+
+			p, err := r.resolveProject(context.Background(), route)
+			if err != nil {
+				t.Fatalf("resolveProject: %v", err)
+			}
+			if p.RepoPath != tc.want {
+				t.Errorf("webhook resolved %q, want %q", p.RepoPath, tc.want)
+			}
+		})
+	}
+}
+
+// projects.id is bigint. The expected digest was computed independently
+// with `printf 3000000000 | sha256sum`.
+func TestProjectIDAboveInt32Range(t *testing.T) {
+	const want = "/r/@hashed/d5/97/d59718945ff6986c9082bb8adbee04c7a748fa6ed32528c318c6b03da3ce0f43.git"
+	pool := &mockPool{projects: []mockProject{{id: 3_000_000_000, route: "group/proj"}}, storageVersion: 1}
+
+	t.Run("sweep", func(t *testing.T) {
+		runner := &mockGitRunner{}
+		r := (&Reconciler{primarySSHHost: "p", reposPath: "/r", maxParallel: 1}).WithPool(pool).WithRunner(runner)
+		if res := r.Reconcile(context.Background()); !res.OK {
+			t.Fatalf("Reconcile: %s", res.Detail)
+		}
+		if len(runner.calls) != 1 {
+			t.Fatalf("expected 1 git call, got %d", len(runner.calls))
+		}
+		if got := runner.calls[0].args[1]; got != want {
+			t.Errorf("fetched %q, want %q", got, want)
+		}
+	})
+
+	t.Run("webhook", func(t *testing.T) {
+		runner := &mockGitRunner{}
+		r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(runner)
+		if err := r.FetchProject(context.Background(), "group/proj"); err != nil {
+			t.Fatalf("FetchProject: %v", err)
+		}
+		if len(runner.calls) != 1 {
+			t.Fatalf("expected 1 git call, got %d", len(runner.calls))
+		}
+		if got := runner.calls[0].args[1]; got != want {
+			t.Errorf("fetched %q, want %q", got, want)
+		}
+	})
+}
+
 func TestFetchProjectUnknownProject(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{}}
+	pool := &mockPool{}
 	runner := &mockGitRunner{}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/r"}).WithPool(pool).WithRunner(runner)
 	err := r.FetchProject(context.TODO(), "group/proj")
@@ -318,54 +409,76 @@ func TestName(t *testing.T) {
 
 // --- mock pool for listProjects ---
 
+type mockProject struct {
+	id    int64
+	route string
+}
+
 type mockPool struct {
-	rows   []projectRow
-	hashed bool
-	err    error
+	projects []mockProject
+	// storageVersion is projects.storage_version for every row; nil is NULL.
+	storageVersion any
+	err            error
+	queries        []string
 }
 
 func (p *mockPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	p.queries = append(p.queries, sql)
 	if p.err != nil {
 		return nil, p.err
 	}
-	return &mockRows{rows: p.rows, hashed: p.hashed}, nil
+	return &mockRows{projects: p.projects, storageVersion: p.storageVersion, typeMap: pgtype.NewMap()}, nil
 }
 
 type mockRows struct {
-	rows   []projectRow
-	hashed bool
-	idx    int
+	projects       []mockProject
+	storageVersion any
+	typeMap        *pgtype.Map
+	idx            int
 }
 
 var _ pgx.Rows = (*mockRows)(nil)
 
 func (m *mockRows) Next() bool {
-	if m.idx >= len(m.rows) {
+	if m.idx >= len(m.projects) {
 		return false
 	}
 	m.idx++
 	return true
 }
 
+type mockColumn struct {
+	oid   uint32
+	value any
+}
+
+// Scan encodes each value as its CE column type and decodes it with pgx's
+// own codecs. Assigning Go values straight into the destinations let a
+// bigint read into an int32 and a smallint read into a bool pass here
+// while failing on every real database.
 func (m *mockRows) Scan(dest ...any) error {
-	r := m.rows[m.idx-1]
-	// resolveProject scans (id, repository_storage, hashed_storage);
+	p := m.projects[m.idx-1]
+	id := mockColumn{pgtype.Int8OID, p.id}
+	storage := mockColumn{pgtype.VarcharOID, "default"}
+	version := mockColumn{pgtype.Int2OID, m.storageVersion}
+	// resolveProject scans (id, repository_storage, storage_version);
 	// listProjects scans those plus namespace id and route path.
-	if len(dest) == 3 {
-		*(dest[0].(*int32)) = r.ID
-		*(dest[1].(*string)) = "default"
-		*(dest[2].(*bool)) = m.hashed
-		return nil
+	cols := []mockColumn{id, storage, version}
+	if len(dest) == 5 {
+		cols = []mockColumn{id, storage, {pgtype.Int8OID, nil}, version, {pgtype.TextOID, p.route}}
 	}
-	*(dest[0].(*int32)) = r.ID
-	*(dest[1].(*string)) = "default"
-	// namespaceID as sql.NullInt64 valid=false
-	dest[2].(*sql.NullInt64).Valid = false
-	// hashed bool
-	*(dest[3].(*bool)) = m.hashed
-	// routePath as sql.NullString
-	dest[4].(*sql.NullString).String = r.RepoPath
-	dest[4].(*sql.NullString).Valid = true
+	if len(dest) != len(cols) {
+		return fmt.Errorf("mock scan: got %d destinations, want %d", len(dest), len(cols))
+	}
+	for i, c := range cols {
+		src, err := m.typeMap.Encode(c.oid, pgtype.BinaryFormatCode, c.value, nil)
+		if err != nil {
+			return fmt.Errorf("mock encode column %d: %w", i, err)
+		}
+		if err := m.typeMap.Scan(c.oid, pgtype.BinaryFormatCode, src, dest[i]); err != nil {
+			return fmt.Errorf("scan column %d: %w", i, err)
+		}
+	}
 	return nil
 }
 
@@ -382,9 +495,9 @@ func (m *mockRows) TypeMap() *pgtype.Map                         { return pgtype
 // repositories root must be skipped without running git, and must not
 // stop the sweep from replicating the well-formed projects beside it.
 func TestReconcileSkipsTraversalRouteWithoutRunningGit(t *testing.T) {
-	pool := &mockPool{rows: []projectRow{
-		{ID: 1, RepoPath: "group/good.git"},
-		{ID: 2, RepoPath: "../../etc/cron.d/evil.git"},
+	pool := &mockPool{projects: []mockProject{
+		{id: 1, route: "group/good"},
+		{id: 2, route: "../../etc/cron.d/evil"},
 	}}
 	runner := &mockGitRunner{out: []byte("")}
 	r := (&Reconciler{primarySSHHost: "p", reposPath: "/var/opt/gitlab/git-data/repositories", maxParallel: 1}).
