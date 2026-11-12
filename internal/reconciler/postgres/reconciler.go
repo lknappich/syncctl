@@ -6,11 +6,14 @@ package postgresreconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"github.com/lknappich/syncctl/internal/config"
 	"github.com/lknappich/syncctl/internal/metrics"
@@ -55,6 +58,8 @@ var defaultPoolFactory PoolFactory = func(ctx context.Context, dsn string) (Pool
 type Reconciler struct {
 	primary     Pool
 	secondaries []secondaryConn
+	lagWarning  time.Duration
+	lagCritical time.Duration
 }
 
 type secondaryConn struct {
@@ -74,7 +79,11 @@ func NewWithFactory(ctx context.Context, cfg *config.Config, pf PoolFactory) (*R
 	if err != nil {
 		return nil, fmt.Errorf("connect primary pg: %w", err)
 	}
-	r := &Reconciler{primary: pPool}
+	r := &Reconciler{
+		primary:     pPool,
+		lagWarning:  cfg.Sync.LagWarningThreshold,
+		lagCritical: cfg.Sync.LagCriticalThreshold,
+	}
 	for _, sc := range cfg.Secondaries {
 		sPool, err := pf(ctx, sc.Postgres.DSN())
 		if err != nil {
@@ -102,26 +111,43 @@ func (r *Reconciler) Close() {
 func (r *Reconciler) Name() string { return name }
 
 // Reconcile queries replication status on both sides and reports lag.
+// Lag at or above the warning threshold stays OK but is logged; lag at
+// or above the critical threshold, or lag that cannot be measured, is
+// drift. A zero threshold disables that check.
 func (r *Reconciler) Reconcile(ctx context.Context) reconciler.Result {
-	result := reconciler.Result{Detail: "ok"}
-	ok := true
+	var result reconciler.Result
+	var notes []string
 
 	for _, sc := range r.secondaries {
 		lag, err := r.checkSecondary(ctx, sc)
 		if err != nil {
-			ok = false
 			result.Remaining++
-			result.Detail = fmt.Sprintf("%s; %s error: %v", result.Detail, sc.name, err)
+			notes = append(notes, fmt.Sprintf("%s error: %v", sc.name, err))
 			metrics.PGReplayLagSeconds.WithLabelValues(sc.name).Set(-1)
+			metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
 			continue
 		}
 		metrics.PGReplayLagSeconds.WithLabelValues(sc.name).Set(lag.Seconds())
-		if lag > 0 {
-			result.Lag = max(result.Lag, lag)
-			result.Detail = fmt.Sprintf("%s; %s lag=%s", result.Detail, sc.name, lag)
+		result.Lag = max(result.Lag, lag)
+		switch {
+		case r.lagCritical > 0 && lag >= r.lagCritical:
+			result.Remaining++
+			notes = append(notes, fmt.Sprintf("%s lag=%s at or above critical threshold %s", sc.name, lag, r.lagCritical))
+			metrics.DriftTotal.WithLabelValues(r.Name(), "critical").Inc()
+		case r.lagWarning > 0 && lag >= r.lagWarning:
+			notes = append(notes, fmt.Sprintf("%s lag=%s at or above warning threshold %s", sc.name, lag, r.lagWarning))
+			log.Warn().Str("reconciler", r.Name()).Str("secondary", sc.name).
+				Dur("lag", lag).Dur("threshold", r.lagWarning).
+				Msg("postgres replay lag at or above warning threshold")
+		case lag > 0:
+			notes = append(notes, fmt.Sprintf("%s lag=%s", sc.name, lag))
 		}
 	}
-	result.OK = ok
+	result.OK = result.Remaining == 0
+	if result.OK {
+		notes = append([]string{"ok"}, notes...)
+	}
+	result.Detail = strings.Join(notes, "; ")
 	return result
 }
 
@@ -145,8 +171,14 @@ func (r *Reconciler) checkSecondary(ctx context.Context, sc secondaryConn) (time
 
 	var lagSec float64
 	err = row.Scan(&lagSec)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("no pg_stat_replication row on primary for application_name %q (replay lag unknown)", sc.name)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("primary has no replication row for %s: %w", sc.name, err)
+	}
+	if lagSec < 0 {
+		return 0, fmt.Errorf("primary reported negative replay lag %gs (replay lag unknown)", lagSec)
 	}
 	return time.Duration(lagSec * float64(time.Second)), nil
 }
