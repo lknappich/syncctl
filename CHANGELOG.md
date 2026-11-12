@@ -13,6 +13,15 @@ permanently reserves a tag once its release has existed, so it can never
 carry binaries. Everything intended for those versions ships in the next
 release.
 
+## [1.1.1](https://github.com/lknappich/syncctl/compare/v1.1.0...v1.1.1) (2026-11-12)
+
+
+### Documentation
+
+* add roadmap ([1f2c156](https://github.com/lknappich/syncctl/commit/1f2c1561d1776e7453f4b9f538bd28eb96c2ba3c))
+* add roadmap ([45c0bc9](https://github.com/lknappich/syncctl/commit/45c0bc937083c8aed4b6f93db6e9073af8a176dc))
+* correct the vulnerability count in the roadmap ([ab78e24](https://github.com/lknappich/syncctl/commit/ab78e2495369fd42d1e4d0a995382f81a270a7b1))
+
 ## [1.1.0](https://github.com/lknappich/syncctl/compare/v1.0.0...v1.1.0) (2026-08-06)
 
 
