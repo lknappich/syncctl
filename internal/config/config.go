@@ -511,6 +511,7 @@ func (c *Config) validate() error {
 		log.Warn().Msg("control_db is set but unused — syncctl keeps no persistent state; remove the key from your config")
 	}
 	c.warnInsecureSSL(&errs)
+	c.validateSiteNames(&errs)
 	c.validateSSHHosts(&errs)
 	c.warnInvalidPaths()
 	c.validateSSHPolicy(&errs)
@@ -603,6 +604,52 @@ func (c *Config) validateLagThresholds(errs *[]error) {
 	if warn >= 0 && crit >= 0 && warn >= crit {
 		*errs = append(*errs, fmt.Errorf("sync.lag_warning_threshold (%s) must be less than sync.lag_critical_threshold (%s)", warn, crit))
 	}
+}
+
+// maxApplicationNameLen is NAMEDATALEN-1 in a standard Postgres build.
+const maxApplicationNameLen = 63
+
+// validateSiteNames requires every site name to survive unchanged as a
+// Postgres application_name: `pg setup` writes it into the standby's
+// primary_conninfo and the lag query matches pg_stat_replication on it.
+// Postgres truncates longer values and rewrites non-printable or
+// non-ASCII bytes, so such a name would never match. Quotes,
+// whitespace and backslashes are refused so the name never needs
+// escaping in a conninfo string or a config file. The primary is
+// checked too because it becomes a standby after a role swap.
+func (c *Config) validateSiteNames(errs *[]error) {
+	check := func(label, name string) {
+		if name == "" {
+			return
+		}
+		if reason := applicationNameProblem(name); reason != "" {
+			*errs = append(*errs, fmt.Errorf(
+				"%s %q %s; it is used as the standby's Postgres application_name, "+
+					"so use 1-%d printable ASCII characters without whitespace, quotes or backslashes",
+				label, name, reason, maxApplicationNameLen))
+		}
+	}
+	check("primary.name", c.Primary.Name)
+	for i, s := range c.Secondaries {
+		check(fmt.Sprintf("secondaries[%d].name", i), s.Name)
+	}
+}
+
+func applicationNameProblem(name string) string {
+	if len(name) > maxApplicationNameLen {
+		return fmt.Sprintf("is %d bytes", len(name))
+	}
+	for i := 0; i < len(name); i++ {
+		switch b := name[i]; {
+		case b >= 0x80:
+			return "contains non-ASCII characters"
+		case b <= ' ' || b == 0x7f:
+			return "contains whitespace or a control character"
+		case b == '\'' || b == '"' || b == '\\':
+			return "contains a quote or backslash"
+		}
+	}
+	return ""
 }
 
 // validateSSHHosts rejects an ssh_host that cannot be parsed into a

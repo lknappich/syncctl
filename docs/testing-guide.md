@@ -125,7 +125,8 @@ On the **secondary** GitLab server, run `pg_basebackup` from the primary:
 ```sh
 # On the secondary server (via SSH):
 sudo -u gitlab-psql /opt/gitlab/embedded/bin/pg_basebackup \
-  -h <PRIMARY_IP> -U gitlab_repl -D /var/opt/gitlab/postgresql/data \
+  -h <PRIMARY_IP> -U gitlab_repl -d 'application_name=<secondary_name>' \
+  -D /var/opt/gitlab/postgresql/data \
   -X stream -c fast -R -P -S gitlab_syncctl
 
 # Then start PostgreSQL:
@@ -136,6 +137,10 @@ sudo -u gitlab-psql /opt/gitlab/embedded/bin/psql \
   -d gitlabhq_production -c "SELECT pg_is_in_recovery();"
 # Should return: t
 ```
+
+`<secondary_name>` is the secondary's `name` from `config.yaml`: syncctl
+finds the standby in `pg_stat_replication` by that `application_name`.
+`syncctl pg setup` sets it for you.
 
 Or use syncctl (if it can SSH to the secondary and run commands):
 
@@ -264,12 +269,6 @@ host replication gitlab_repl <SECONDARY_IP>/32 md5
 The `db_key_base` on the secondary doesn't match the primary. SSH to the
 secondary, edit `/etc/gitlab/gitlab.rb`, copy the value from the primary,
 and run `sudo gitlab-ctl reconfigure`.
-
-### `syncctl_pg_replay_lag_seconds` is always -1
-The secondary's `application_name` in `primary_conninfo` doesn't match
-the secondary's name in config. The `pg_stat_replication` row on the
-primary won't be found. Fix by setting `application_name=<secondary_name>`
-in the secondary's `postgresql.auto.conf`.
 
 ### rsync fails with "permission denied"
 The SSH user on the primary needs read access to
