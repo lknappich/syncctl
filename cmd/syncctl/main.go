@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -542,11 +543,9 @@ func newFailoverCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if secondaryName == "" && len(cfg.Secondaries) > 0 {
-				secondaryName = cfg.Secondaries[0].Name
-			}
-			if secondaryName == "" {
-				return fmt.Errorf("--secondary is required (no secondaries in config)")
+			target, err := failoverTarget(cfg, secondaryName)
+			if err != nil {
+				return err
 			}
 			if !confirm && !g.dryRun {
 				return fmt.Errorf("failover requires --yes or --dry-run")
@@ -558,14 +557,40 @@ func newFailoverCmd(g *globalFlags) *cobra.Command {
 			defer cancel()
 			fc := failover.New(cfg, g.dryRun)
 			fc.SetForce(force)
-			return fc.Promote(ctx, secondaryName)
+			return fc.Promote(ctx, target)
 		},
 	}
-	cmd.Flags().StringVar(&secondaryName, "secondary", "", "name of the secondary to promote")
+	cmd.Flags().StringVar(&secondaryName, "secondary", "",
+		"name of the secondary to promote (required when more than one secondary is configured)")
 	cmd.Flags().BoolVar(&confirm, "yes", false, "confirm failover (required without --dry-run)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"promote even if the primary still answers health checks (risks split-brain)")
 	return cmd
+}
+
+// failoverTarget refuses to fall back to Secondaries[0] when several are
+// configured: config-file order is not a reason to promote a replica, and
+// promoting the wrong one cannot be undone. Auto-failover follows the same rule.
+func failoverTarget(cfg *config.Config, name string) (string, error) {
+	if name != "" {
+		s, err := findSecondary(cfg, name)
+		if err != nil {
+			return "", err
+		}
+		return s.Name, nil
+	}
+	switch len(cfg.Secondaries) {
+	case 0:
+		return "", fmt.Errorf("no secondaries configured")
+	case 1:
+		return cfg.Secondaries[0].Name, nil
+	}
+	names := make([]string, len(cfg.Secondaries))
+	for i, s := range cfg.Secondaries {
+		names[i] = s.Name
+	}
+	return "", fmt.Errorf("%d secondaries configured (%s); pass --secondary <name> to choose which one to promote",
+		len(names), strings.Join(names, ", "))
 }
 
 // --- adopt-as-secondary subcommand ---

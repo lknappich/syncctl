@@ -168,6 +168,52 @@ func TestFindSecondaryNotFound(t *testing.T) {
 	}
 }
 
+// Defaulting to Secondaries[0] let config-file order decide which replica
+// became the primary, which auto-failover already refuses to do.
+func TestFailoverTarget(t *testing.T) {
+	one := []config.SiteConfig{{Name: "dr1"}}
+	two := []config.SiteConfig{{Name: "dr1"}, {Name: "dr2"}}
+	tests := []struct {
+		name        string
+		secondaries []config.SiteConfig
+		flag        string
+		want        string
+		wantErr     []string
+	}{
+		{name: "one secondary, no flag", secondaries: one, want: "dr1"},
+		{name: "one secondary, matching flag", secondaries: one, flag: "dr1", want: "dr1"},
+		{name: "one secondary, unknown flag", secondaries: one, flag: "nope", wantErr: []string{`"nope"`}},
+		{name: "several secondaries, no flag", secondaries: two, wantErr: []string{"--secondary", "dr1", "dr2"}},
+		{name: "several secondaries, explicit second", secondaries: two, flag: "dr2", want: "dr2"},
+		{name: "several secondaries, unknown flag", secondaries: two, flag: "nope", wantErr: []string{`"nope"`}},
+		{name: "no secondaries", wantErr: []string{"no secondaries"}},
+		{name: "no secondaries, flag set", flag: "dr1", wantErr: []string{`"dr1"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Secondaries: tt.secondaries}
+			got, err := failoverTarget(cfg, tt.flag)
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("failoverTarget(%q) = %q, want error", tt.flag, got)
+				}
+				for _, sub := range tt.wantErr {
+					if !strings.Contains(err.Error(), sub) {
+						t.Errorf("error %q does not mention %q", err, sub)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("failoverTarget(%q): %v", tt.flag, err)
+			}
+			if got != tt.want {
+				t.Errorf("failoverTarget(%q) = %q, want %q", tt.flag, got, tt.want)
+			}
+		})
+	}
+}
+
 // buildSiteReconcilers is the unit that must run once per secondary.
 // Previously buildReconcilers used Secondaries[0] only, so every replica
 // after the first received no git, object storage, registry, consistency
