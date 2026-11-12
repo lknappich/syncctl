@@ -182,3 +182,82 @@ func TestRunbookEmitsNewPrimaryFlagWhenAmbiguous(t *testing.T) {
 		t.Error("with one secondary the flag is noise; it should be omitted")
 	}
 }
+
+// With several secondaries the runbook used to print
+// `failover --secondary <first configured> --yes`, choosing the promotion
+// target by config order, and promised that auto-failover would promote
+// "the first secondary" although the controller refuses to.
+func TestRunbookDoesNotChooseAFailoverTargetByConfigOrder(t *testing.T) {
+	cfg := &config.Config{
+		Primary: config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com", SSHHost: "p:22"},
+		Secondaries: []config.SiteConfig{
+			{Name: "s1"}, {Name: "s2"}, {Name: "s3"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := Generate(&buf, cfg); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "--secondary s1") {
+		t.Errorf("runbook picks the first configured secondary as the failover target:\n%s", out)
+	}
+	for _, want := range []string{
+		"    syncctl failover --secondary <name> --yes\n",
+		"one of: s1, s2, s3.",
+		"promotes nothing: `failover.promote_secondary` is unset",
+		"6. Each secondary you did not promote (of s1, s2, s3) still\n   replicates from p",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("runbook missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "first secondary") {
+		t.Errorf("runbook claims auto-failover promotes the first secondary:\n%s", out)
+	}
+
+	cfg.Failover = &config.FailoverConfig{PromoteSecondary: "s2"}
+	buf.Reset()
+	if err := Generate(&buf, cfg); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(buf.String(), "the failover controller promotes s2.") {
+		t.Errorf("runbook should name failover.promote_secondary as the auto-failover target:\n%s", buf.String())
+	}
+}
+
+func TestRunbookWithOneSecondaryHasNothingElseToRepoint(t *testing.T) {
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com", SSHHost: "p:22"},
+		Secondaries: []config.SiteConfig{{Name: "only"}},
+	}
+	var buf bytes.Buffer
+	if err := Generate(&buf, cfg); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "the failover controller promotes only.") {
+		t.Errorf("runbook should name the single secondary as the auto-failover target:\n%s", out)
+	}
+	if strings.Contains(out, "did not promote") {
+		t.Errorf("with one secondary there is nothing left to re-point:\n%s", out)
+	}
+}
+
+// adopt-as-secondary needs --old-primary-ssh when primary.ssh_host is
+// unset. Printed with an empty value, the flag swallowed the next token
+// (`--new-primary`) as its argument.
+func TestRunbookAdoptCommandWithoutPrimarySSHHost(t *testing.T) {
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com"},
+		Secondaries: []config.SiteConfig{{Name: "s1"}, {Name: "s2"}},
+	}
+	var buf bytes.Buffer
+	if err := Generate(&buf, cfg); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	want := "syncctl adopt-as-secondary --old-primary-ssh <old-primary-host:port> --new-primary <promoted-secondary>\n"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("runbook missing %q:\n%s", want, buf.String())
+	}
+}
