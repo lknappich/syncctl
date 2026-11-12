@@ -113,6 +113,15 @@ func (r *Result) checks(ctx context.Context, cfg *config.Config, runner sshexec.
 	// --- PostgreSQL: max_wal_senders > 0 ---
 	r.add(pgWalSendersCheck(ctx, "primary", cfg.Primary.Postgres, pf))
 
+	// --- PostgreSQL: replication slots cannot retain unbounded WAL ---
+	slotConfigured := cfg.Primary.Postgres.SlotName != ""
+	for _, sc := range cfg.Secondaries {
+		slotConfigured = slotConfigured || sc.Postgres.SlotName != ""
+	}
+	for _, c := range pgSlotWALChecks(ctx, "primary", cfg.Primary.Postgres, slotConfigured, pf) {
+		r.add(c)
+	}
+
 	// --- db_key_base present on primary ---
 	r.add(dbKeyPresentCheck(ctx, "primary", cfg.Primary.SSHHost, runner))
 
@@ -273,6 +282,84 @@ func pgWalSendersCheck(ctx context.Context, label string, pg config.PostgresConf
 	}
 	return Check{Name: "pg:" + label + ":max_wal_senders", Category: "postgres",
 		Status: "PASS", Detail: "max_wal_senders=" + level}
+}
+
+// slotWALQuery folds all physical slots into one string, one
+// "name|wal_status|retained_bytes" line per slot, because Pool only exposes
+// QueryRow. Slot names are restricted to [a-z0-9_], so '|' is a safe separator.
+// wal_status and restart_lsn are NULL for a slot that has not reserved WAL yet.
+const slotWALQuery = `SELECT coalesce(string_agg(slot_name || '|' || coalesce(wal_status, '') || '|' ||
+	coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint::text, ''), E'\n' ORDER BY slot_name), '')
+	FROM pg_replication_slots WHERE slot_type = 'physical'`
+
+// pgSlotWALChecks reports whether replication slots can fill the primary's
+// disk. A stalled standby holding a slot retains WAL indefinitely unless
+// max_slot_wal_keep_size caps it. slotConfigured covers a slot that syncctl
+// will create but that does not exist yet.
+func pgSlotWALChecks(ctx context.Context, label string, pg config.PostgresConfig, slotConfigured bool, pf PoolFactory) []Check {
+	name := "pg:" + label + ":max_slot_wal_keep_size"
+	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	pool, err := pf(connCtx, pg.DSN())
+	if err != nil {
+		return []Check{{Name: name, Category: "postgres",
+			Status: "FAIL", Detail: fmt.Sprintf("connect: %v", err)}}
+	}
+	defer pool.Close()
+
+	var keep string
+	if err := pool.QueryRow(connCtx, "SHOW max_slot_wal_keep_size").Scan(&keep); err != nil {
+		// The setting only exists on PostgreSQL 13 and later.
+		return []Check{{Name: name, Category: "postgres",
+			Status: "WARN", Detail: fmt.Sprintf("query: %v (requires PostgreSQL 13+)", err)}}
+	}
+
+	var slots string
+	slotsErr := pool.QueryRow(connCtx, slotWALQuery).Scan(&slots)
+	slotLines := strings.Fields(slots)
+
+	var checks []Check
+	if keep == "-1" && (slotConfigured || len(slotLines) > 0) {
+		checks = append(checks, Check{Name: name, Category: "postgres", Status: "WARN",
+			Detail: "max_slot_wal_keep_size=-1 (unlimited): a stalled standby can retain WAL until the primary's disk fills; " +
+				"set a PostgreSQL max_slot_wal_keep_size limit sized below free WAL disk space"})
+	} else {
+		checks = append(checks, Check{Name: name, Category: "postgres",
+			Status: "PASS", Detail: "max_slot_wal_keep_size=" + keep})
+	}
+
+	if slotsErr != nil {
+		return append(checks, Check{Name: "pg:" + label + ":slots", Category: "postgres",
+			Status: "WARN", Detail: fmt.Sprintf("query slots: %v", slotsErr)})
+	}
+	for _, line := range slotLines {
+		parts := strings.SplitN(line, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		slot, status, retained := parts[0], parts[1], parts[2]
+		detail := "wal_status=" + status
+		if status == "" {
+			detail = "wal_status=unknown"
+		}
+		if retained == "" {
+			detail += " retained=unknown"
+		} else {
+			detail += " retained=" + retained + " bytes"
+		}
+		st := "PASS"
+		switch status {
+		case "unreserved":
+			st = "WARN"
+			detail += " (WAL is about to be removed; the standby may lose the slot)"
+		case "lost":
+			st = "WARN"
+			detail += " (required WAL was removed; re-bootstrap the standby)"
+		}
+		checks = append(checks, Check{Name: "pg:" + label + ":slot:" + slot, Category: "postgres",
+			Status: st, Detail: detail})
+	}
+	return checks
 }
 
 func pgInRecoveryCheck(ctx context.Context, label string, pg config.PostgresConfig, pf PoolFactory) Check {
