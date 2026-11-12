@@ -31,21 +31,6 @@ func TestNewBuildsURLs(t *testing.T) {
 	}
 }
 
-// newTestReconciler builds a Reconciler pointing at two httptest servers.
-func newTestReconciler(t *testing.T, primaryHandler, secondaryHandler http.HandlerFunc) (*Reconciler, *httptest.Server, *httptest.Server) {
-	t.Helper()
-	psrv := httptest.NewServer(primaryHandler)
-	ssrv := httptest.NewServer(secondaryHandler)
-	r := &Reconciler{
-		primaryURL:     psrv.URL + "/api/v4",
-		secondaryURL:   ssrv.URL + "/api/v4",
-		primaryToken:   "ptok",
-		secondaryToken: "stok",
-		client:         &http.Client{},
-	}
-	return r, psrv, ssrv
-}
-
 func TestReconcileAllMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Total", "10")

@@ -146,11 +146,9 @@ func TestFetchProjectRejectsTraversal(t *testing.T) {
 
 // mockGitRunner records calls and returns canned output.
 type mockGitRunner struct {
-	out     []byte
-	err     error
-	calls   []gitCall
-	perPath map[string][]byte
-	perErr  map[string]error
+	out   []byte
+	err   error
+	calls []gitCall
 }
 
 type gitCall struct {
