@@ -153,7 +153,7 @@ loop:
 
 // projectRow holds the minimal fields needed to locate and fetch a repo.
 type projectRow struct {
-	ID         int32
+	ID         int64
 	RepoPath   string // e.g. "group/subgroup/project.git"
 	HashedPath string // hashed storage path (if enabled)
 }
@@ -171,7 +171,7 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 		SELECT p.id,
 		       p.repository_storage,
 		       p.project_namespace_id,
-		       p.hashed_storage,
+		       p.storage_version,
 		       r.path
 		FROM projects p
 		LEFT JOIN routes r
@@ -187,20 +187,20 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 	var projects []projectRow
 	for rows.Next() {
 		var (
-			p           projectRow
-			storage     string
-			namespaceID sql.NullInt64
-			hashed      bool
-			routePath   sql.NullString
+			p              projectRow
+			storage        string
+			namespaceID    sql.NullInt64
+			storageVersion sql.NullInt64
+			routePath      sql.NullString
 		)
-		if err := rows.Scan(&p.ID, &storage, &namespaceID, &hashed, &routePath); err != nil {
+		if err := rows.Scan(&p.ID, &storage, &namespaceID, &storageVersion, &routePath); err != nil {
 			return nil, err
 		}
-		diskPath, err := repoDiskPath(storage, hashed, routePath.String, p.ID)
+		diskPath, err := repoDiskPath(storage, usesHashedStorage(storageVersion), routePath.String, p.ID)
 		if err != nil {
 			// One malformed row must not stop replicating everything
 			// else; skip it and say which project was skipped.
-			log.Warn().Err(err).Int32("project_id", p.ID).
+			log.Warn().Err(err).Int64("project_id", p.ID).
 				Str("route_path", logging.ProjectPath(routePath.String)).
 				Msg("skipping project with an unusable repository path")
 			continue
@@ -209,6 +209,13 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 		projects = append(projects, p)
 	}
 	return projects, rows.Err()
+}
+
+// usesHashedStorage reports whether a project's repository is in the hashed
+// layout. storage_version is NULL or 0 for legacy storage, and every later
+// version keeps repositories hashed, so 2 must not fall back to legacy.
+func usesHashedStorage(storageVersion sql.NullInt64) bool {
+	return storageVersion.Valid && storageVersion.Int64 >= 1
 }
 
 // repoDiskPath maps a project to its on-disk relative path under
@@ -227,7 +234,7 @@ func (r *Reconciler) listProjects(ctx context.Context) ([]projectRow, error) {
 // project every few minutes, to feed unchecked values to filepath.Join.
 // Join *cleans* rather than rejects, so "../../etc/cron.d/x" resolves to
 // a path outside the repository root.
-func repoDiskPath(_ string, hashed bool, routePath string, projectID int32) (string, error) {
+func repoDiskPath(_ string, hashed bool, routePath string, projectID int64) (string, error) {
 	if hashed {
 		h := hashedStorageHash(projectID)
 		return fmt.Sprintf("@hashed/%s/%s/%s.git", h[0:2], h[2:4], h), nil
@@ -262,7 +269,7 @@ func containedJoin(root, rel string) (string, error) {
 // hashedStorageHash returns the 64-char lowercase hex SHA-256 of the
 // project ID rendered as a decimal string — the digest GitLab's hashed
 // storage layout is keyed on.
-func hashedStorageHash(projectID int32) string {
+func hashedStorageHash(projectID int64) string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%d", projectID)
 	return hex.EncodeToString(h.Sum(nil))
@@ -277,25 +284,25 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 		// repository on disk. This used to return false with no output,
 		// so the project counted as failed on every sweep forever with
 		// no indication of which project or why.
-		log.Warn().Int32("project_id", p.ID).
+		log.Warn().Int64("project_id", p.ID).
 			Msg("project has no route path and is not using hashed storage; cannot resolve its repository on disk")
 		return false
 	}
 
 	ep, err := sshexec.ParseEndpoint(r.primarySSHHost)
 	if err != nil {
-		log.Warn().Err(err).Int32("project_id", p.ID).Msg("git fetch: bad ssh_host")
+		log.Warn().Err(err).Int64("project_id", p.ID).Msg("git fetch: bad ssh_host")
 		return false
 	}
 	sshCmd, err := r.sshCfg.SSHString(r.primarySSHHost)
 	if err != nil {
-		log.Warn().Err(err).Int32("project_id", p.ID).Msg("git fetch: bad ssh_host")
+		log.Warn().Err(err).Int64("project_id", p.ID).Msg("git fetch: bad ssh_host")
 		return false
 	}
 
 	localPath, err := containedJoin(r.reposPath, p.RepoPath)
 	if err != nil {
-		log.Warn().Err(err).Int32("project_id", p.ID).
+		log.Warn().Err(err).Int64("project_id", p.ID).
 			Str("repo", logging.ProjectPath(p.RepoPath)).
 			Msg("refusing to fetch outside the repositories root")
 		return false
@@ -319,11 +326,11 @@ func (r *Reconciler) fetchOne(ctx context.Context, p projectRow) bool {
 	out, err := localcmd.RunWith(projectTimeout, r.runner, "git", args,
 		[]string{"GIT_SSH_COMMAND=" + sshCmd})
 	if err != nil {
-		log.Warn().Err(err).Int32("project_id", p.ID).
+		log.Warn().Err(err).Int64("project_id", p.ID).
 			Str("repo", logging.ProjectPath(p.RepoPath)).
 			Str("output", logging.CommandOutput(string(out))).
 			Msg("git fetch failed")
-		log.Debug().Int32("project_id", p.ID).
+		log.Debug().Int64("project_id", p.ID).
 			Str("output", strings.TrimSpace(string(out))).
 			Msg("git fetch output")
 		return false
@@ -359,7 +366,7 @@ func (r *Reconciler) resolveProject(ctx context.Context, projectPath string) (pr
 		return projectRow{RepoPath: projectPath + ".git"}, nil
 	}
 	rows, err := r.primaryPool.Query(ctx, `
-		SELECT p.id, p.repository_storage, p.hashed_storage
+		SELECT p.id, p.repository_storage, p.storage_version
 		FROM projects p
 		JOIN routes r
 		  ON r.source_id = p.id
@@ -378,14 +385,14 @@ func (r *Reconciler) resolveProject(ctx context.Context, projectPath string) (pr
 		return projectRow{}, fmt.Errorf("project %s not found in replicated DB", projectPath)
 	}
 	var (
-		p       projectRow
-		storage string
-		hashed  bool
+		p              projectRow
+		storage        string
+		storageVersion sql.NullInt64
 	)
-	if err := rows.Scan(&p.ID, &storage, &hashed); err != nil {
+	if err := rows.Scan(&p.ID, &storage, &storageVersion); err != nil {
 		return projectRow{}, fmt.Errorf("scan project %s: %w", projectPath, err)
 	}
-	diskPath, err := repoDiskPath(storage, hashed, projectPath, p.ID)
+	diskPath, err := repoDiskPath(storage, usesHashedStorage(storageVersion), projectPath, p.ID)
 	if err != nil {
 		return projectRow{}, fmt.Errorf("resolve project %s: %w", projectPath, err)
 	}
