@@ -13,6 +13,65 @@ permanently reserves a tag once its release has existed, so it can never
 carry binaries. Everything intended for those versions ships in the next
 release.
 
+## [1.2.0](https://github.com/lknappich/syncctl/compare/v1.1.1...v1.2.0) (2026-11-23)
+
+
+### Features
+
+* **deploy:** ship a systemd unit with each release ([6dd9e1f](https://github.com/lknappich/syncctl/commit/6dd9e1f9b659af6c21b8c0b67e2bb92305407505))
+* **deploy:** ship a systemd unit with each release ([b0a23f0](https://github.com/lknappich/syncctl/commit/b0a23f0406e2858cf9e5e7f36104ab83f3b1cdb2))
+* **doctor:** check replication slot WAL retention ([a8dc704](https://github.com/lknappich/syncctl/commit/a8dc704036aa6c67855cc88b9af8c5b16cc00534))
+* **doctor:** check replication slot WAL retention ([0cc18a8](https://github.com/lknappich/syncctl/commit/0cc18a86cea30ac5b170c1ff7de0405e248281ec))
+* **secretsparity:** compare gitlab-secrets.json by keyed digest ([a192178](https://github.com/lknappich/syncctl/commit/a19217840e41bf2f7b0893e3858376515f269cee))
+* **secretsparity:** compare gitlab-secrets.json by keyed digest ([1a67b4e](https://github.com/lknappich/syncctl/commit/1a67b4eef5c03eaf6d5a60bdf13cbbace03a31e8))
+* **versionparity:** compare GitLab and PostgreSQL versions between sites ([74d52c5](https://github.com/lknappich/syncctl/commit/74d52c533eef7268b22de4f871280f8df368f2c6))
+* **versionparity:** compare GitLab and PostgreSQL versions between sites ([f77f200](https://github.com/lknappich/syncctl/commit/f77f20012ee33baa2e5514a6b482e4e3fda8d5fc))
+
+
+### Bug Fixes
+
+* **build:** base the image on distroless Debian 13, pinned by digest ([e9b506c](https://github.com/lknappich/syncctl/commit/e9b506cf3d795722c594a94f6dafc1d9c84e01df))
+* **build:** base the image on distroless Debian 13, pinned by digest ([7208c76](https://github.com/lknappich/syncctl/commit/7208c761e2844638600820b6efaaa81b6154d5e7))
+* **cli:** refuse to pick a failover target by config order ([c4f8167](https://github.com/lknappich/syncctl/commit/c4f816729c505d28cf5d6117701f33a52faf9a68))
+* **cli:** refuse to pick a failover target by config order ([8c21d8c](https://github.com/lknappich/syncctl/commit/8c21d8c449f0681f4870248f007fd140c1de1264))
+* **consistency:** count the partitioned CI tables ([71269bb](https://github.com/lknappich/syncctl/commit/71269bb3e645cd5d42c82a69560c1d759b1cdfbe))
+* **consistency:** count the partitioned CI tables ([8b04131](https://github.com/lknappich/syncctl/commit/8b041315ba9ec9d53b5eeec86b419869bad42d52))
+* **deps:** move to the maintained go.yaml.in/yaml/v3 ([2248f90](https://github.com/lknappich/syncctl/commit/2248f907ec1f55b2950f5bd43813226fdfdf390f))
+* **deps:** move to the maintained go.yaml.in/yaml/v3 ([88e8792](https://github.com/lknappich/syncctl/commit/88e87929803d3478d284ef9fcaa7cdadf465e87c))
+* **deps:** update Go modules ([b8f6693](https://github.com/lknappich/syncctl/commit/b8f66930a57bbb9307ddb805da1e2eafb0f33894))
+* **deps:** update Go modules ([be4a9b2](https://github.com/lknappich/syncctl/commit/be4a9b2206c5756af28a85aec9e174b21ab2537c))
+* **doctor:** refine replication slot WAL checks ([0509c91](https://github.com/lknappich/syncctl/commit/0509c9176dfe0a3b4760c4631b41597e4c594a70))
+* **failover:** check the runbook writes the linter flags ([0b24eba](https://github.com/lknappich/syncctl/commit/0b24eba4cf4e6fb9dc6a042cd644beff5285ae10))
+* **failover:** clarify promote-once scope and failed-promotion log ([a574782](https://github.com/lknappich/syncctl/commit/a5747820473be264e503de68fecd38ab03e8c895))
+* **failover:** print valid adopt and failover commands in runbooks ([b2ef275](https://github.com/lknappich/syncctl/commit/b2ef275da564b944f2e5f8c68be13242a155a973))
+* **failover:** print valid adopt and failover commands in runbooks ([41bb255](https://github.com/lknappich/syncctl/commit/41bb2555bcd5070bf9d8446533c4355dfff6c9bb))
+* **failover:** run auto-failover promotion only once per outage ([90194a9](https://github.com/lknappich/syncctl/commit/90194a9a9b5299c1c3b4dcaaf0531b651ed78b74))
+* **failover:** run auto-failover promotion only once per outage ([a423c1c](https://github.com/lknappich/syncctl/commit/a423c1c7944886ae76d4bb6839766334fe1d4cf7))
+* **gitfetch:** use storage_version and bigint project ids ([d73ccaa](https://github.com/lknappich/syncctl/commit/d73ccaac66dc233362b6db98ca93086f3f2ba07f))
+* **gitfetch:** use storage_version and bigint project ids ([b5a3e28](https://github.com/lknappich/syncctl/commit/b5a3e28515ad9d608b3cff93ae803670bc4d36ab))
+* **objectstorage:** address custom S3 endpoints path-style ([c8daafb](https://github.com/lknappich/syncctl/commit/c8daafb08401766c744914016460b738ddd0881a))
+* **objectstorage:** address custom S3 endpoints path-style ([578a31a](https://github.com/lknappich/syncctl/commit/578a31a8736476ebdd339f78932afb3f11c6ca8c))
+* **pgsetup:** set application_name to the secondary's site name ([0020ac1](https://github.com/lknappich/syncctl/commit/0020ac15b2379ed20d8ac9a05b1b322ce0f6f910))
+* **pgsetup:** set application_name to the secondary's site name ([b2c9d04](https://github.com/lknappich/syncctl/commit/b2c9d043ecbd8e6209b186249989d9928224ca88))
+* **postgres:** evaluate replication lag thresholds ([f640f12](https://github.com/lknappich/syncctl/commit/f640f12f7a67277aa2cca4d9b1055ac7b5977b74))
+* **postgres:** evaluate replication lag thresholds ([c5e8b2c](https://github.com/lknappich/syncctl/commit/c5e8b2cf11232a47a55a3fc3269d256b14720f26))
+* **postgres:** validate lag thresholds and clarify lag messages ([082d9a5](https://github.com/lknappich/syncctl/commit/082d9a5bf732264364871e4ce7e1f01013221e84))
+* **readonly:** stop writing ApplicationSetting on a read-only standby ([0f2ee88](https://github.com/lknappich/syncctl/commit/0f2ee880b55ea703dcab9bc5d120f4507f87b27a))
+* **readonly:** stop writing ApplicationSetting on a read-only standby ([a7acbab](https://github.com/lknappich/syncctl/commit/a7acbabfce36972213991e8dd3603b9581266c22))
+* **secretsparity:** read stdout only, harden flattening, document sudo rule ([88c55d6](https://github.com/lknappich/syncctl/commit/88c55d6de91b0e88664b0bf35ecd60791d7db6a7))
+* **versionparity:** scan all output lines, compare edition, harden errors ([6b91808](https://github.com/lknappich/syncctl/commit/6b918081940f47242821f3389e424d0dcd6b27fb))
+
+
+### Refactoring
+
+* **versionparity:** read GitLab version via stdout-only Output ([8990d60](https://github.com/lknappich/syncctl/commit/8990d6047ce719409ef27d39e434fe73968b9ce9))
+
+
+### Documentation
+
+* plan the dependency refresh and the setup script ([cfa19a5](https://github.com/lknappich/syncctl/commit/cfa19a503c56581b6869d3395a47f8308ce76fb2))
+* plan the dependency refresh and the setup script ([30dc97b](https://github.com/lknappich/syncctl/commit/30dc97bcdc8039a864d111d8fd5425d657376132))
+
 ## [1.1.1](https://github.com/lknappich/syncctl/compare/v1.1.0...v1.1.1) (2026-11-12)
 
 
