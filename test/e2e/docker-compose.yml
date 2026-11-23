@@ -19,7 +19,7 @@ services:
     hostname: gl-a
     environment:
       GITLAB_DISABLE_OPENSSH: "true"
-      GITLAB_ROOT_PASSWORD: ${E2E_ROOT_PASSWORD:-e2e-Root-Passw0rd-1}
+      GITLAB_ROOT_PASSWORD: ${E2E_ROOT_PASSWORD:-e2e-Qx7v-Lm3k-Tz9w}
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://gl-a'
         letsencrypt['enable'] = false
@@ -28,6 +28,10 @@ services:
         prometheus_monitoring['enable'] = false
         gitlab_kas['enable'] = false
         gitlab_rails['usage_ping_enabled'] = false
+        # With listen_address set, Rails would connect over TCP to that
+        # address and hit the md5 rule without a password. Keep Rails on the
+        # Unix socket, as without TCP; TCP stays open for replication.
+        gitlab_rails['db_host'] = '/var/opt/gitlab/postgresql'
         gitaly['env'] = { 'GITALY_COMMAND_SPAWN_MAX_PARALLEL' => '2' }
         postgresql['listen_address'] = '0.0.0.0'
         postgresql['port'] = 5432
