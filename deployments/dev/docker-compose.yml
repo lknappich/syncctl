@@ -1,6 +1,6 @@
 services:
   postgres-primary:
-    image: postgres:16-alpine
+    image: postgres:16.16-alpine3.24
     environment:
       POSTGRES_USER: gitlab
       POSTGRES_PASSWORD: ${PG_CTRL_PASSWORD:-gitlab}
@@ -12,7 +12,7 @@ services:
       - ./postgres-primary-init:/docker-entrypoint-initdb.d:ro
 
   postgres-secondary:
-    image: postgres:16-alpine
+    image: postgres:16.16-alpine3.24
     environment:
       PGUSER: replicator
     depends_on: [postgres-primary]
