@@ -224,6 +224,37 @@ func TestNewS3ClientWithEndpoint(t *testing.T) {
 	}
 }
 
+// Self-hosted S3 servers (MinIO, SeaweedFS, Ceph RGW) are reached by a
+// plain hostname that has no wildcard DNS for <bucket>.<host>, so a custom
+// endpoint must be addressed path-style.
+func TestNewS3ClientUsesPathStyleForCustomEndpoint(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListBucketResult>`))
+	}))
+	defer srv.Close()
+
+	cfg := &config.S3Config{
+		Region:        "us-east-1",
+		PrimaryBucket: "gitlab-primary",
+		AccessKey:     "ak",
+		SecretKey:     "sk",
+		Endpoint:      strings.Replace(srv.URL, "127.0.0.1", "localhost", 1),
+	}
+	client, bucket, err := newS3Client(context.Background(), cfg, cfg.PrimaryBucket)
+	if err != nil {
+		t.Fatalf("newS3Client: %v", err)
+	}
+	if _, _, err := bucketStats(context.Background(), client, bucket); err != nil {
+		t.Fatalf("bucketStats: %v", err)
+	}
+	if gotPath != "/gitlab-primary" && gotPath != "/gitlab-primary/" {
+		t.Errorf("request path = %q, want the bucket in the path", gotPath)
+	}
+}
+
 func TestNewS3ClientNoEndpoint(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.S3Config{
