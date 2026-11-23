@@ -7,6 +7,12 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
+    # The AWS SDK modules depend on each other's exact versions, so they
+    # only go green when they move together.
+    groups:
+      aws-sdk:
+        patterns:
+          - "github.com/aws/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -15,3 +21,21 @@ updates:
     labels:
       - dependencies
       - github-actions
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+  - package-ecosystem: docker-compose
+    directory: /deployments/dev
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    # Physical replication needs the PostgreSQL major that GitLab ships;
+    # a major bump has to follow GitLab, not the image registry.
+    ignore:
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
