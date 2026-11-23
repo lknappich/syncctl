@@ -7,10 +7,13 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lknappich/syncctl/internal/config"
@@ -112,6 +115,16 @@ func (r *Result) checks(ctx context.Context, cfg *config.Config, runner sshexec.
 
 	// --- PostgreSQL: max_wal_senders > 0 ---
 	r.add(pgWalSendersCheck(ctx, "primary", cfg.Primary.Postgres, pf))
+
+	// --- PostgreSQL: replication slots cannot retain unbounded WAL ---
+	// Slots live on the primary but are named in the secondaries' config.
+	slotConfigured := false
+	for _, sc := range cfg.Secondaries {
+		slotConfigured = slotConfigured || sc.Postgres.SlotName != ""
+	}
+	for _, c := range pgSlotWALChecks(ctx, "primary", cfg.Primary.Postgres, slotConfigured, pf) {
+		r.add(c)
+	}
 
 	// --- db_key_base present on primary ---
 	r.add(dbKeyPresentCheck(ctx, "primary", cfg.Primary.SSHHost, runner))
@@ -273,6 +286,137 @@ func pgWalSendersCheck(ctx context.Context, label string, pg config.PostgresConf
 	}
 	return Check{Name: "pg:" + label + ":max_wal_senders", Category: "postgres",
 		Status: "PASS", Detail: "max_wal_senders=" + level}
+}
+
+// slotWALQuery folds all physical slots into one string, one
+// "name|active|wal_status|retained_bytes" line per slot, because Pool only
+// exposes QueryRow. Slot names are restricted to [a-z0-9_], so '|' is a safe
+// separator. wal_status and restart_lsn are NULL for a slot that has not
+// reserved WAL yet. On a standby the marker slotsOnStandby is returned instead,
+// since pg_current_wal_lsn() errors there.
+const slotsOnStandby = "!standby"
+
+const slotWALQuery = `SELECT CASE WHEN pg_is_in_recovery() THEN '` + slotsOnStandby + `' ELSE
+	coalesce(string_agg(slot_name || '|' || active::text || '|' || coalesce(wal_status, '') || '|' ||
+	coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint::text, ''), E'\n' ORDER BY slot_name), '') END
+	FROM pg_replication_slots WHERE slot_type = 'physical'`
+
+// pgSQLStateUndefinedObject is raised by SHOW for an unknown setting.
+const pgSQLStateUndefinedObject = "42704"
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// pgSlotWALChecks reports whether replication slots can fill the primary's
+// disk. A stalled standby holding a slot retains WAL indefinitely unless
+// max_slot_wal_keep_size caps it. slotConfigured covers a slot that syncctl
+// will create but that does not exist yet.
+func pgSlotWALChecks(ctx context.Context, label string, pg config.PostgresConfig, slotConfigured bool, pf PoolFactory) []Check {
+	name := "pg:" + label + ":max_slot_wal_keep_size"
+	slotsName := "pg:" + label + ":slots"
+	connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	pool, err := pf(connCtx, pg.DSN())
+	if err != nil {
+		return []Check{{Name: name, Category: "postgres",
+			Status: "FAIL", Detail: fmt.Sprintf("connect: %v", err)}}
+	}
+	defer pool.Close()
+
+	var keep string
+	if err := pool.QueryRow(connCtx, "SHOW max_slot_wal_keep_size").Scan(&keep); err != nil {
+		detail := fmt.Sprintf("query: %v", err)
+		var pgErr *pgconn.PgError
+		// The setting only exists on PostgreSQL 13 and later.
+		if errors.As(err, &pgErr) && pgErr.Code == pgSQLStateUndefinedObject {
+			detail += " (requires PostgreSQL 13+)"
+		}
+		return []Check{{Name: name, Category: "postgres", Status: "WARN", Detail: detail}}
+	}
+
+	var slots string
+	slotsErr := pool.QueryRow(connCtx, slotWALQuery).Scan(&slots)
+	onStandby := slotsErr == nil && slots == slotsOnStandby
+	var slotLines []string
+	if slotsErr == nil && !onStandby {
+		slotLines = strings.Fields(slots)
+	}
+
+	var checks []Check
+	hasSlots := slotConfigured || len(slotLines) > 0
+	switch {
+	case keep == "-1" && hasSlots:
+		checks = append(checks, Check{Name: name, Category: "postgres", Status: "WARN",
+			Detail: "max_slot_wal_keep_size=-1 (unlimited): a stalled standby can retain WAL until the primary's disk fills; " +
+				"set a PostgreSQL max_slot_wal_keep_size limit sized below free WAL disk space"})
+	case keep == "0" && hasSlots:
+		checks = append(checks, Check{Name: name, Category: "postgres", Status: "WARN",
+			Detail: "max_slot_wal_keep_size=0: slots keep no WAL beyond max_wal_size, so a briefly lagging standby loses its slot; " +
+				"raise the PostgreSQL max_slot_wal_keep_size limit"})
+	default:
+		checks = append(checks, Check{Name: name, Category: "postgres",
+			Status: "PASS", Detail: "max_slot_wal_keep_size=" + keep})
+	}
+
+	if slotsErr != nil {
+		return append(checks, Check{Name: slotsName, Category: "postgres",
+			Status: "WARN", Detail: fmt.Sprintf("query slots: %v", slotsErr)})
+	}
+	if onStandby {
+		return append(checks, Check{Name: slotsName, Category: "postgres", Status: "WARN",
+			Detail: "host is in recovery (standby?); slots cannot be inspected, check that the primary config points at the primary"})
+	}
+	var bad int
+	for _, line := range slotLines {
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) != 4 {
+			bad++
+			continue
+		}
+		slot, active, status, retained := parts[0], parts[1] == "true", parts[2], parts[3]
+		detail := "wal_status=" + status
+		if status == "" {
+			detail = "wal_status=unknown"
+		}
+		if n, err := strconv.ParseInt(retained, 10, 64); err == nil {
+			detail += " retained=" + humanBytes(n)
+		} else {
+			detail += " retained=unknown"
+		}
+		st := "PASS"
+		if !active {
+			st = "WARN"
+			detail += " inactive"
+			if keep == "-1" {
+				detail += " (stalled standby: WAL retention is unbounded)"
+			}
+		}
+		switch status {
+		case "unreserved":
+			st = "WARN"
+			detail += " (WAL is about to be removed; the standby may lose the slot)"
+		case "lost":
+			st = "WARN"
+			detail += " (required WAL was removed; re-bootstrap the standby)"
+		}
+		checks = append(checks, Check{Name: "pg:" + label + ":slot:" + slot, Category: "postgres",
+			Status: st, Detail: detail})
+	}
+	if bad > 0 {
+		checks = append(checks, Check{Name: slotsName, Category: "postgres", Status: "WARN",
+			Detail: fmt.Sprintf("%d slot row(s) could not be parsed", bad)})
+	}
+	return checks
 }
 
 func pgInRecoveryCheck(ctx context.Context, label string, pg config.PostgresConfig, pf PoolFactory) Check {

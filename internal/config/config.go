@@ -78,7 +78,7 @@ type PostgresConfig struct {
 	ReplicationUser     string `yaml:"replication_user"`
 	ReplicationPassword string `yaml:"replication_password" env:"required"`
 
-	// SlotName is the logical replication slot name to use on the primary.
+	// SlotName is the physical replication slot a standby uses on the primary.
 	SlotName string `yaml:"slot_name,omitempty"`
 
 	// SSLMode controls TLS for the control and replication connections.
