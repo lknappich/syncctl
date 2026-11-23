@@ -855,3 +855,60 @@ func TestValidateLagThresholds(t *testing.T) {
 		})
 	}
 }
+
+// Site names become the standby's application_name, which the lag query
+// matches against pg_stat_replication. Postgres replaces non-printable
+// and non-ASCII bytes with '?' and truncates past 63 bytes, so such a
+// name would never match.
+func TestValidateSiteNamesAsApplicationName(t *testing.T) {
+	tests := []struct {
+		name    string
+		site    string
+		wantErr string
+	}{
+		{name: "hyphenated", site: "secondary-us"},
+		{name: "punctuation", site: "eu.west_1:a/b+c"},
+		{name: "63 bytes", site: strings.Repeat("a", 63)},
+		{name: "64 bytes", site: strings.Repeat("a", 64), wantErr: "is 64 bytes"},
+		{name: "space", site: "gl b", wantErr: "whitespace or a control character"},
+		{name: "tab", site: "gl\tb", wantErr: "whitespace or a control character"},
+		{name: "newline", site: "gl\nb", wantErr: "whitespace or a control character"},
+		{name: "control", site: "gl\x01b", wantErr: "whitespace or a control character"},
+		{name: "DEL", site: "gl\x7fb", wantErr: "whitespace or a control character"},
+		{name: "non-ASCII", site: "glü", wantErr: "non-ASCII"},
+		{name: "single quote", site: "gl'b", wantErr: "quote or backslash"},
+		{name: "double quote", site: `gl"b`, wantErr: "quote or backslash"},
+		{name: "backslash", site: `gl\b`, wantErr: "quote or backslash"},
+	}
+	for _, tc := range tests {
+		for _, label := range []string{"primary.name", "secondaries[0].name"} {
+			t.Run(tc.name+"/"+label, func(t *testing.T) {
+				c := &Config{Secondaries: []SiteConfig{{Name: "secondary-us"}}}
+				if label == "primary.name" {
+					c.Primary.Name = tc.site
+				} else {
+					c.Primary.Name = "primary-eu"
+					c.Secondaries[0].Name = tc.site
+				}
+				var nameErrs []string
+				if err := c.validate(); err != nil {
+					for _, line := range strings.Split(err.Error(), "\n") {
+						if strings.Contains(line, "application_name") {
+							nameErrs = append(nameErrs, line)
+						}
+					}
+				}
+				if tc.wantErr == "" {
+					if len(nameErrs) != 0 {
+						t.Fatalf("unexpected site name errors: %q", nameErrs)
+					}
+					return
+				}
+				if len(nameErrs) != 1 || !strings.HasPrefix(nameErrs[0], label+" ") ||
+					!strings.Contains(nameErrs[0], tc.wantErr) {
+					t.Errorf("site name errors = %q, want exactly one for %s containing %q", nameErrs, label, tc.wantErr)
+				}
+			})
+		}
+	}
+}
