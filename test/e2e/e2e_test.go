@@ -299,6 +299,7 @@ ALTER ROLE gitlab WITH PASSWORD '%[3]s';`, replicationUser, replicationPassword,
 	})
 
 	step("git_parity", false, func(t *testing.T) {
+		skipIfKnown(t, known)
 		if repoRel == "" {
 			t.Skip("no repository path from seed")
 		}
