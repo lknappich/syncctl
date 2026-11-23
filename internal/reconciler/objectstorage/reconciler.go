@@ -91,7 +91,12 @@ func newS3Client(ctx context.Context, s3cfg *config.S3Config, bucket string) (*s
 	}
 	opts := []func(*s3.Options){}
 	if s3cfg.Endpoint != "" {
-		opts = append(opts, func(o *s3.Options) { o.BaseEndpoint = ptr(s3cfg.Endpoint) })
+		// Self-hosted S3 servers have no wildcard DNS for <bucket>.<host>,
+		// so the SDK's default virtual-hosted addressing cannot reach them.
+		opts = append(opts, func(o *s3.Options) {
+			o.BaseEndpoint = ptr(s3cfg.Endpoint)
+			o.UsePathStyle = true
+		})
 	}
 	return s3.NewFromConfig(awsCfg, opts...), bucket, nil
 }
