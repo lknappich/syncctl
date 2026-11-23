@@ -273,7 +273,7 @@ func (c *Controller) Promote(ctx context.Context, secondaryName string) error {
 	for _, step := range steps {
 		log.Info().Str("step", step.name).Msg("failover step")
 		if c.dryRun {
-			fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
+			_, _ = fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
 			continue
 		}
 		if err := step.fn(ctx); err != nil {
@@ -294,13 +294,13 @@ func (c *Controller) printPostFailoverRunbook(promoted *config.SiteConfig) {
 		oldPrimarySSH = shellquote.Quote(c.cfg.Primary.SSHHost)
 	}
 	w := c.out
-	fmt.Fprintln(w, "\n=== POST-FAILOVER RUNBOOK ===")
-	fmt.Fprintln(w, "1. Update DNS to point to the new primary:", promoted.ExternalURL)
-	fmt.Fprintln(w, "2. Re-point CI runners to the new primary coordinator URL")
-	fmt.Fprintln(w, "3. Update any integrations that reference the old primary URL")
-	fmt.Fprintf(w, "4. When the old primary recovers, run: syncctl adopt-as-secondary --new-primary %s --old-primary-ssh %s\n",
+	_, _ = fmt.Fprintln(w, "\n=== POST-FAILOVER RUNBOOK ===")
+	_, _ = fmt.Fprintln(w, "1. Update DNS to point to the new primary:", promoted.ExternalURL)
+	_, _ = fmt.Fprintln(w, "2. Re-point CI runners to the new primary coordinator URL")
+	_, _ = fmt.Fprintln(w, "3. Update any integrations that reference the old primary URL")
+	_, _ = fmt.Fprintf(w, "4. When the old primary recovers, run: syncctl adopt-as-secondary --new-primary %s --old-primary-ssh %s\n",
 		shellquote.Quote(promoted.Name), oldPrimarySSH)
-	fmt.Fprintln(w, "5. Verify webhook secrets and access tokens work (behavioral check)")
+	_, _ = fmt.Fprintln(w, "5. Verify webhook secrets and access tokens work (behavioral check)")
 
 	var others []string
 	for _, s := range c.cfg.Secondaries {
@@ -309,7 +309,7 @@ func (c *Controller) printPostFailoverRunbook(promoted *config.SiteConfig) {
 		}
 	}
 	if len(others) > 0 {
-		fmt.Fprintf(w, "6. Secondaries %s still replicate from the old primary %s; syncctl does not re-point them. "+
+		_, _ = fmt.Fprintf(w, "6. Secondaries %s still replicate from the old primary %s; syncctl does not re-point them. "+
 			"Re-point each to %s (or re-base it with pg_basebackup) before relying on it\n",
 			strings.Join(others, ", "), c.cfg.Primary.Name, promoted.Name)
 	}
@@ -398,7 +398,7 @@ func (c *Controller) AdoptAsSecondary(ctx context.Context, oldPrimarySSH, newPri
 	for _, step := range steps {
 		log.Info().Str("step", step.name).Msg("role-swap step")
 		if c.dryRun {
-			fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
+			_, _ = fmt.Fprintf(c.out, "[dry-run] step: %s\n", step.name)
 			continue
 		}
 		if err := step.fn(ctx); err != nil {
