@@ -1,0 +1,22 @@
+[Unit]
+Description=syncctl replication control plane for a self-hosted GitLab
+Documentation=https://github.com/lknappich/syncctl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=syncctl
+Group=syncctl
+EnvironmentFile=/etc/syncctl/syncctl.env
+ExecStart=/usr/local/bin/syncctl serve -c /etc/syncctl/config.yaml
+Restart=on-failure
+RestartSec=10s
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+# NoNewPrivileges is deliberately unset: it would stop a local sudo,
+# which writing into git-owned repositories on this host may require.
+
+[Install]
+WantedBy=multi-user.target
