@@ -86,6 +86,18 @@ func TestE2E(t *testing.T) {
 			s := strings.TrimSpace(out)
 			return err == nil && s == "healthy", s
 		})
+		// The image reports healthy while its first reconfigure is still
+		// running; that reconfigure ends by restarting puma, sidekiq,
+		// workhorse and nginx, which turned the seed API calls into 502s.
+		poll(t, bootTimeout, pollInterval, primary+" first reconfigure to finish", func() (bool, string) {
+			out, _ := run(ctx, "docker", "logs", primary)
+			return strings.Contains(out, "gitlab Reconfigured!"), "no 'gitlab Reconfigured!' line yet"
+		})
+		poll(t, bootTimeout, pollInterval, primary+" readiness", func() (bool, string) {
+			out, err := dexec(ctx, primary, "", nil, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+				"http://localhost/-/readiness?all=1")
+			return err == nil && strings.TrimSpace(out) == "200", out
+		})
 
 		// gitlab-secrets.json must be on gl-b before its first reconfigure so
 		// both sites share the same db_key_base and other secrets.
