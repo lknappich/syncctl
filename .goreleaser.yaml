@@ -32,6 +32,7 @@ archives:
       - README.md
       - LICENSE
       - deploy/config.example.yaml
+      - deploy/syncctl.service
 
 dockers_v2:
   - images:
