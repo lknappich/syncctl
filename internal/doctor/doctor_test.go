@@ -845,3 +845,7 @@ func TestPGSlotWALChecksSlotQueryError(t *testing.T) {
 		t.Errorf("Status = %s, want WARN", c.Status)
 	}
 }
+
+func (m *mockRunner) Output(ctx context.Context, host, cmd string) ([]byte, error) {
+	return m.CombinedOutput(ctx, host, cmd)
+}

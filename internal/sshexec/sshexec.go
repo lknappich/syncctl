@@ -5,7 +5,9 @@
 package sshexec
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -20,6 +22,10 @@ import (
 // so tests can inject a mock without touching the network.
 type Runner interface {
 	CombinedOutput(ctx context.Context, host, remoteCmd string) ([]byte, error)
+	// Output returns stdout only. stderr is discarded and never included
+	// in the returned error, so callers handling secrets cannot leak it
+	// and ssh/sudo warnings cannot corrupt structured stdout.
+	Output(ctx context.Context, host, remoteCmd string) ([]byte, error)
 }
 
 // Endpoint is a parsed ssh_host value. Config carries the destination as
@@ -227,6 +233,28 @@ func (c Config) CombinedOutput(ctx context.Context, host, remoteCmd string) ([]b
 		return nil, err
 	}
 	return cmd.CombinedOutput()
+}
+
+// Output runs the SSH command and returns stdout only. stderr is
+// discarded and is not part of any returned error text.
+func (c Config) Output(ctx context.Context, host, remoteCmd string) ([]byte, error) {
+	cmd, err := c.Command(ctx, host, remoteCmd)
+	if err != nil {
+		return nil, err
+	}
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		out := stdout.Bytes()
+		clear(out)
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return nil, fmt.Errorf("ssh exited with status %d", ee.ExitCode())
+		}
+		return nil, errors.New("ssh failed to run")
+	}
+	return stdout.Bytes(), nil
 }
 
 // CombinedOutputStdin is CombinedOutput with data piped to the remote

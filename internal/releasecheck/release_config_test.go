@@ -83,3 +83,14 @@ func perms(block string) map[string]bool {
 	}
 	return out
 }
+
+// install.sh takes the systemd unit from the release archive, so an
+// archive without it cannot be installed as a service.
+func TestArchiveShipsSystemdUnit(t *testing.T) {
+	goreleaser := read(t, "../../.goreleaser.yaml")
+	files := firstMatch(t, goreleaser,
+		`(?ms)^archives:\n.*?^[ \t]+files:\n((?:[ \t]+- [^\n]*\n)+)`, "archives[].files in .goreleaser.yaml")
+	if !regexp.MustCompile(`(?m)^\s+- deploy/syncctl\.service$`).MatchString(files) {
+		t.Errorf("deploy/syncctl.service is not in the release archive files:\n%s", files)
+	}
+}

@@ -204,3 +204,11 @@ func (m *fallbackRunner) SSHString() string { return "mock-ssh" }
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func (m *mockRunner) Output(ctx context.Context, host, cmd string) ([]byte, error) {
+	return m.CombinedOutput(ctx, host, cmd)
+}
+
+func (m *fallbackRunner) Output(ctx context.Context, host, cmd string) ([]byte, error) {
+	return m.CombinedOutput(ctx, host, cmd)
+}

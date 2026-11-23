@@ -35,6 +35,7 @@ The following table enumerates every `sudo` command the tool runs:
 | `sudo -u gitlab-psql pg_basebackup` | old-primary | Re-bootstrap as secondary after role-swap |
 | `sudo rsync` | primary (remote) | Read git-owned files during rsync |
 | `sudo grep` | both | Read root-owned secrets.yml for db_key_base parity check |
+| `sudo -n cat /etc/gitlab/gitlab-secrets.json` | primary + secondaries | Read gitlab-secrets.json for whole-file secrets parity check (`internal/secretsparity`) |
 
 ### Recommended sudoers configuration
 
@@ -48,7 +49,21 @@ syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl stop
 syncctl ALL=(root) NOPASSWD: /usr/bin/gitlab-ctl start
 syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_ctl promote *
 syncctl ALL=(gitlab-psql) NOPASSWD: /opt/gitlab/embedded/bin/pg_basebackup *
+syncctl ALL=(root) NOPASSWD: /usr/bin/cat /etc/gitlab/gitlab-secrets.json
 ```
+
+The `cat` rule must be an exact-argument rule as shown. Never use a
+wildcard such as `/usr/bin/cat *`: that would let the `syncctl` account
+read any file on the host as root. The command runs as `sudo -n`, so a
+missing sudoers rule fails immediately instead of waiting for a password.
+
+The secrets parity check transfers the full plaintext
+`gitlab-secrets.json` over SSH from each host and holds it in `syncctl`
+process memory while it is parsed (like the db_key_base check below). It
+is never written to disk, logged, or printed; only per-key digests under
+a random per-run HMAC key are compared and only key paths are reported.
+Memory wiping is best effort: Go strings and decoder internals cannot be
+zeroed.
 
 ### Host key verification
 
