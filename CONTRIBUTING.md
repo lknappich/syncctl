@@ -21,9 +21,11 @@ go test ./...
 go vet ./...
 ```
 
-Requires Go 1.26+. A `docker-compose` dev stack (primary + secondary
-GitLab + Postgres + MinIO) is provided under `deployments/dev` for
-end-to-end testing of the replication flows.
+Requires Go 1.26+. A `docker-compose` dev stack (primary and secondary
+PostgreSQL plus SeaweedFS as the S3 server) is provided under
+`deployments/dev`; point `object_storage.s3.endpoint` at
+`http://s3:8333`. End-to-end tests against real GitLab CE live in
+`test/e2e`.
 
 ## Pull requests
 

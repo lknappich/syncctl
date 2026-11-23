@@ -27,24 +27,27 @@ services:
     volumes:
       - pg-secondary:/var/lib/postgresql/data
 
-  minio:
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
+  # MinIO no longer publishes community images. SeaweedFS's `weed mini`
+  # (the image's default command) serves S3 on 8333 and creates the
+  # buckets named in S3_BUCKET on first start.
+  s3:
+    image: chrislusf/seaweedfs:4.54
     environment:
-      MINIO_ROOT_USER: ${S3_AK:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SK:-minioadmin}
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [minio-data:/data]
+      AWS_ACCESS_KEY_ID: ${S3_AK:-devaccesskey}
+      AWS_SECRET_ACCESS_KEY: ${S3_SK:-devsecretkey}
+      S3_BUCKET: gitlab-primary,gitlab-replica
+    ports: ["8333:8333"]
+    volumes: [s3-data:/data]
 
   syncctl:
     build: .
-    depends_on: [postgres-primary, postgres-secondary, minio]
+    depends_on: [postgres-primary, postgres-secondary, s3]
     environment:
       PG_CTRL_PASSWORD: ${PG_CTRL_PASSWORD:-gitlab}
       PG_REPL_PASSWORD: ${PG_REPL_PASSWORD:-replpass}
       SEC_REPL_PASSWORD: ${SEC_REPL_PASSWORD:-replpass}
-      S3_AK: ${S3_AK:-minioadmin}
-      S3_SK: ${S3_SK:-minioadmin}
+      S3_AK: ${S3_AK:-devaccesskey}
+      S3_SK: ${S3_SK:-devsecretkey}
     volumes:
       - ./config.yaml:/etc/syncctl/config.yaml:ro
     command: ["serve", "-c", "/etc/syncctl/config.yaml"]
@@ -52,4 +55,4 @@ services:
 volumes:
   pg-primary:
   pg-secondary:
-  minio-data:
+  s3-data:
