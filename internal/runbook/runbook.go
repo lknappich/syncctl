@@ -6,6 +6,7 @@ package runbook
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/template"
 
 	"github.com/lknappich/syncctl/internal/config"
@@ -15,17 +16,32 @@ import (
 func Generate(w io.Writer, cfg *config.Config) error {
 	tmpl, err := template.New("runbook").Funcs(template.FuncMap{
 		"pct": func(v float64) string { return fmt.Sprintf("%.1f%%", v*100) },
-		"firstSecondaryName": func(c *config.Config) string {
-			if len(c.Secondaries) > 0 {
-				return c.Secondaries[0].Name
+		"secondaryNames": func(c *config.Config) string {
+			names := make([]string, len(c.Secondaries))
+			for i, s := range c.Secondaries {
+				names[i] = s.Name
 			}
-			return ""
+			return strings.Join(names, ", ")
 		},
+		"autoFailoverTarget": autoFailoverTarget,
 	}).Parse(runbookTmpl)
 	if err != nil {
 		return err
 	}
 	return tmpl.Execute(w, cfg)
+}
+
+// autoFailoverTarget mirrors the failover controller's choice so the
+// runbook does not promise a promotion the controller will refuse: it
+// never picks a secondary by config order.
+func autoFailoverTarget(c *config.Config) string {
+	if c.Failover != nil && c.Failover.PromoteSecondary != "" {
+		return c.Failover.PromoteSecondary
+	}
+	if len(c.Secondaries) == 1 {
+		return c.Secondaries[0].Name
+	}
+	return ""
 }
 
 const runbookTmpl = `# syncctl Operational Runbook
@@ -45,13 +61,23 @@ When the primary is down and a secondary must be promoted:
 
 ### Automated (if auto_failover is enabled)
 
-The failover controller will automatically promote the first secondary
-after 3 consecutive health check failures ({{.Primary.ExternalURL}}).
+{{with autoFailoverTarget .}}After 3 consecutive health check failures against
+{{$.Primary.ExternalURL}}, the failover controller promotes {{.}}.
+{{- else}}After 3 consecutive health check failures against
+{{.Primary.ExternalURL}}, the failover controller declares the primary down
+but promotes nothing: ` + "`failover.promote_secondary`" + ` is unset and it will
+not choose a secondary by config order. Set it, or fail over manually.
+{{- end}}
 
 ### Manual
+{{if eq (len .Secondaries) 1}}
+    syncctl failover --secondary {{(index .Secondaries 0).Name}} --yes
+{{else}}
+    syncctl failover --secondary <name> --yes
 
-    syncctl failover --secondary {{firstSecondaryName .}} --yes
-
+Replace <name> with the secondary to promote, one of: {{secondaryNames .}}.
+syncctl will not choose one for you.
+{{end}}
 Rehearse it first with --dry-run in place of --yes. If the primary is
 still answering health checks and you are promoting deliberately, add
 --force — that is the split-brain case, so be sure.
@@ -63,12 +89,17 @@ still answering health checks and you are promoting deliberately, add
 3. Update any external integrations (Slack, JIRA, etc.) with the new URL.
 4. Verify webhook delivery by checking a sample project's webhook logs.
 5. Verify access tokens work by making an authenticated API call.
+{{- if gt (len .Secondaries) 1}}
+6. Each secondary you did not promote (of {{secondaryNames .}}) still
+   replicates from {{.Primary.Name}}; syncctl does not re-point it.
+   Re-point each to the new primary, or re-base it with pg_basebackup.
+{{- end}}
 
 ## 2. Role-Swap: Re-attach Old Primary as Secondary
 
 When the old primary comes back online:
 
-    syncctl adopt-as-secondary --old-primary-ssh {{.Primary.SSHHost}}{{if gt (len .Secondaries) 1}} --new-primary <promoted-secondary>{{end}}
+    syncctl adopt-as-secondary --old-primary-ssh {{or .Primary.SSHHost "<old-primary-host:port>"}}{{if gt (len .Secondaries) 1}} --new-primary <promoted-secondary>{{end}}
 
 This runs pg_basebackup from the new primary and reconfigures the old
 primary as a read-only secondary.

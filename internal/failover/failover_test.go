@@ -724,3 +724,53 @@ func TestAutoFailoverRetriesAFailedPromotionOnlyInTheNextOutage(t *testing.T) {
 		}
 	})
 }
+
+// The post-failover runbook is followed by an operator mid-incident. It
+// used to print `adopt-as-secondary --secondary <old primary>`, a flag that
+// command does not have; the new primary must be named with --new-primary.
+func TestPostFailoverRunbookPrintsARunnableAdoptCommand(t *testing.T) {
+	cfg := &config.Config{
+		Primary: config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com", SSHHost: "p:22"},
+		Secondaries: []config.SiteConfig{
+			{Name: "s1", ExternalURL: "https://s1.example.com"},
+			{Name: "s2", ExternalURL: "https://s2.example.com"},
+			{Name: "s3", ExternalURL: "https://s3.example.com"},
+		},
+	}
+	fc := New(cfg, true)
+	var out strings.Builder
+	fc.out = &out
+	if err := fc.Promote(context.Background(), "s2"); err != nil {
+		t.Fatalf("dry-run promote: %v", err)
+	}
+	got := out.String()
+	if want := "syncctl adopt-as-secondary --new-primary s2 --old-primary-ssh p:22\n"; !strings.Contains(got, want) {
+		t.Errorf("runbook should print %q, got:\n%s", want, got)
+	}
+	if strings.Contains(got, "adopt-as-secondary --secondary") {
+		t.Errorf("runbook prints the nonexistent --secondary flag for adopt-as-secondary:\n%s", got)
+	}
+	if !strings.Contains(got, "Secondaries s1, s3 still replicate from the old primary p") {
+		t.Errorf("runbook should say which secondaries still follow the old primary, got:\n%s", got)
+	}
+}
+
+func TestPostFailoverRunbookWithoutPrimarySSHHost(t *testing.T) {
+	cfg := &config.Config{
+		Primary:     config.SiteConfig{Name: "p", ExternalURL: "https://p.example.com"},
+		Secondaries: []config.SiteConfig{{Name: "s", ExternalURL: "https://s.example.com"}},
+	}
+	fc := New(cfg, true)
+	var out strings.Builder
+	fc.out = &out
+	if err := fc.Promote(context.Background(), "s"); err != nil {
+		t.Fatalf("dry-run promote: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "syncctl adopt-as-secondary --new-primary s --old-primary-ssh <old-primary-host:port>\n") {
+		t.Errorf("without primary.ssh_host the command needs an --old-primary-ssh placeholder, got:\n%s", got)
+	}
+	if strings.Contains(got, "still replicate") {
+		t.Errorf("with one secondary there is nothing left to re-point, got:\n%s", got)
+	}
+}
